@@ -178,6 +178,47 @@ def prepare_candidate(repo, workspace, base, source, channel, tag, version):
     return git(workspace, "rev-parse", "HEAD").stdout.strip()
 
 
+def build_worktrees(state):
+    config = state / "build-worktrees.json"
+    try:
+        names = json.loads(config.read_text(encoding="utf-8")) if config.exists() else {}
+    except (OSError, ValueError) as error:
+        raise SyncError(f"Could not read the build checkout settings in {config}.") from error
+    if not isinstance(names, dict):
+        raise SyncError(f"Build checkout settings in {config} must be a JSON object.")
+
+    worktrees = {}
+    for channel in ("stable", "beta"):
+        name = names.get(channel, f"build-{channel}")
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?", name):
+            raise SyncError(f"The {channel} build checkout must be a directory name in {state}.")
+        workspace = (state / name).resolve()
+        if workspace.parent != state.resolve():
+            raise SyncError(f"The {channel} build checkout must be inside {state}.")
+        worktrees[channel] = workspace
+    if worktrees["stable"] == worktrees["beta"]:
+        raise SyncError("Stable and Beta need separate build checkouts.")
+    return worktrees
+
+
+def prepare_build_checkout(repo, workspace, commit):
+    if not workspace.exists():
+        git(repo, "worktree", "add", "--quiet", "--detach", workspace, commit)
+        return
+
+    root, common = git(
+        workspace, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"
+    ).stdout.splitlines()
+    repo_common = git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()
+    if Path(root).resolve() != workspace or Path(common).resolve() != Path(repo_common).resolve():
+        raise SyncError(f"The build checkout in {workspace} does not belong to {repo}.")
+    if (git(workspace, "symbolic-ref", "-q", "HEAD", check=False).returncode != 1
+            or git(workspace, "status", "--porcelain").stdout.strip()):
+        raise SyncError(f"The release build checkout must be detached and clean: {workspace}.")
+    if git(workspace, "rev-parse", "HEAD").stdout.strip() != commit:
+        git(workspace, "switch", "--detach", "--quiet", "--no-overwrite-ignore", commit)
+
+
 def download_baseline(repo, state, release):
     tag = release["tag_name"]
     assets = [asset for asset in release["assets"] if asset["name"] == ASSET]
@@ -300,8 +341,13 @@ def sync_channel(repo, state, channel, upstream, check):
         return f"Nuvio {tag} can be built for Nexus {channel}."
 
     version = next_version(repo, heads, published.values(), channel)
-    workspace = state / f"preview-{channel}-{tag}"
-    commit = prepare_candidate(repo, workspace, base, source, channel, tag, version)
+    checkouts = build_worktrees(state)
+    merge_workspace = state / f"preview-{channel}-{tag}"
+    while merge_workspace in checkouts.values():
+        merge_workspace = merge_workspace.with_name(f"merge-{merge_workspace.name}")
+    commit = prepare_candidate(repo, merge_workspace, base, source, channel, tag, version)
+    build_workspace = checkouts[channel]
+    prepare_build_checkout(repo, build_workspace, commit)
     stable_apk = download_baseline(repo, state, stable)
     beta_apk = download_baseline(repo, state, beta) if beta else None
     output = state / "candidates" / version[0]
@@ -312,12 +358,15 @@ def sync_channel(repo, state, channel, upstream, check):
         with log_path.open("w", encoding="utf-8") as log:
             run(POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "RemoteSigned",
                 "-File", SCRIPTS / "verify-nexus-release.ps1",
-                "-Repo", repo, "-Source", workspace, "-Output", output,
+                "-Repo", repo, "-Source", build_workspace, "-Output", output,
                 "-VersionName", version[0], "-VersionCode", version[1],
                 "-StableApk", stable_apk, *(["-BetaApk", beta_apk] if beta_apk else []),
                 cwd=repo, stdout=log)
     except (SyncError, subprocess.SubprocessError) as error:
         raise SyncError(f"Release verification failed. See {log_path}.") from error
+    if (git(build_workspace, "rev-parse", "HEAD").stdout.strip() != commit
+            or git(build_workspace, "status", "--porcelain").stdout.strip()):
+        raise SyncError(f"The build checkout changed during verification: {build_workspace}.")
     apk = output / ASSET
     write_json(pending, {"channel": channel, "tag": f"v{version[0]}", "upstream": tag,
                          "base": base, "commit": commit, "apk": str(apk), "digest": digest(apk),

@@ -3,14 +3,17 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
+from subprocess import CompletedProcess
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from sync_nuvio_releases import (
     SyncError,
+    build_worktrees,
     digest,
     finish_release,
     latest_beta,
+    prepare_build_checkout,
     read_feed,
     verify_publication,
     version_only_conflicts,
@@ -106,3 +109,41 @@ class UpstreamReleaseTests(unittest.TestCase):
             self.assertIn("--draft=false", publish)
             self.assertIn("--latest", publish)
             self.assertFalse(pending.exists())
+
+    def test_build_worktrees_reuse_local_checkout_names(self):
+        with TemporaryDirectory(dir=Path.cwd()) as temporary:
+            state = Path(temporary).resolve()
+            config = state / "build-worktrees.json"
+            config.write_text(json.dumps({"stable": "promote-stable-v0.1.3"}), encoding="utf-8")
+            self.assertEqual(build_worktrees(state), {
+                "stable": state / "promote-stable-v0.1.3", "beta": state / "build-beta",
+            })
+            config.write_text(json.dumps({"beta": "../outside"}), encoding="utf-8")
+            with self.assertRaises(SyncError):
+                build_worktrees(state)
+            config.write_text(json.dumps({"stable": "build-beta"}), encoding="utf-8")
+            with self.assertRaises(SyncError):
+                build_worktrees(state)
+
+    def test_build_checkout_moves_to_candidate_only_when_clean(self):
+        with TemporaryDirectory(dir=Path.cwd()) as temporary:
+            repo = Path(temporary).resolve()
+            workspace = repo / "build-stable"
+            workspace.mkdir()
+            common = repo / ".git"
+            identity = CompletedProcess([], 0, f"{workspace}\n{common}\n")
+            origin = CompletedProcess([], 0, str(common))
+            detached = CompletedProcess([], 1, "")
+            with patch("sync_nuvio_releases.git", side_effect=[
+                identity, origin, detached, CompletedProcess([], 0, " M app/build.gradle.kts"),
+            ]) as git:
+                with self.assertRaises(SyncError):
+                    prepare_build_checkout(repo, workspace, "candidate")
+                self.assertEqual(git.call_count, 4)
+
+            with patch("sync_nuvio_releases.git", side_effect=[
+                identity, origin, detached, CompletedProcess([], 0, ""),
+                CompletedProcess([], 0, "previous"), CompletedProcess([], 0, ""),
+            ]) as git:
+                prepare_build_checkout(repo, workspace, "candidate")
+                git.assert_called_with(workspace, "switch", "--detach", "--quiet", "--no-overwrite-ignore", "candidate")

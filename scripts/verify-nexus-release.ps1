@@ -51,11 +51,11 @@ $env:Path = @(
 ) -join ';'
 try {
     Invoke-Checked (Join-Path $Source 'gradlew.bat') @(
-        '--init-script', $init, '--no-daemon', '--console=plain', '--configure-on-demand', '--max-workers=1',
+        '--init-script', $init, '--daemon', '--build-cache', '--console=plain', '--configure-on-demand', '--max-workers=1',
         '-PnexusUniversalApk=true', '-Pkotlin.compiler.execution.strategy=in-process',
         '-Pandroid.builder.sdkDownload=false',
         '-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=768m -XX:ActiveProcessorCount=8 -Dfile.encoding=UTF-8',
-        ':app:assembleFullRelease', ':app:testFullReleaseUnitTest',
+        ':app:assembleFullRelease', ':app:testFullReleaseUnitTest', '--rerun',
         '--tests', 'com.nuvio.tv.data.livetv.XtreamClientTest', '--tests', 'com.nuvio.tv.updater.*'
     )
 } finally {
