@@ -291,12 +291,6 @@ android {
             buildConfigField("String", "PREMIUMIZE_CLIENT_ID", "\"${localProperties.getProperty("PREMIUMIZE_CLIENT_ID", "")}\"")
             buildConfigField("String", "SPONSOR_NAMES", buildConfigString(sponsorNames))
         }
-        create("beta") {
-            initWith(buildTypes.getByName("release"))
-            applicationIdSuffix = ".beta"
-            matchingFallbacks += "release"
-            buildConfigField("String", "SENTRY_ENVIRONMENT", buildConfigString("beta"))
-        }
         create("benchmark") {
             initWith(buildTypes.getByName("release"))
             signingConfig = signingConfigs.getByName("debug")

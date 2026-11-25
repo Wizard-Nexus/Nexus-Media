@@ -15,12 +15,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_FILE = ROOT / "app" / "build.gradle.kts"
 RELEASE_OUTPUT_DIR = ROOT / "build" / "release"
-APK_DIR = ROOT / "app" / "build" / "outputs" / "apk" / "full" / "beta"
+APK_DIR = ROOT / "app" / "build" / "outputs" / "apk" / "full" / "release"
 DEFAULT_BETA_NOTICE = (
     "## This is a beta version intended for testing only. Expect breaking changes "
     "in updates. Normal users are advised to wait for the stable release."
 )
-EXPECTED_ASSET_NAMES = ["Nexus-Media-Beta.apk"]
+EXPECTED_ASSET_NAMES = ["Nexus-Media.apk"]
 VERSION_NAME_RE = re.compile(r'(?m)^(\s*versionName\s*=\s*")([^"]+)(")')
 VERSION_CODE_RE = re.compile(r"(?m)^(\s*versionCode\s*=\s*)(\d+)")
 VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
@@ -319,21 +319,22 @@ def ensure_version_available(release_tag: str) -> None:
 def build_release(version_name: str, version_code: int) -> list[Path]:
     gradle = ["cmd.exe", "/d", "/c", "gradlew.bat"] if os.name == "nt" else ["./gradlew"]
     subprocess.run(
-        [*gradle, ":app:assembleFullBeta", "--configure-on-demand", "-PnexusUniversalApk=true"],
+        [*gradle, ":app:assembleFullRelease", "--configure-on-demand", "-PnexusUniversalApk=true"],
         cwd=ROOT,
         check=True,
     )
     metadata = json.loads((APK_DIR / "output-metadata.json").read_text(encoding="utf-8"))
     [entry] = metadata["elements"]
     if (
-        metadata["applicationId"] != "app.nexusmedia.tv.beta"
+        metadata["applicationId"] != "app.nexusmedia.tv"
         or entry["versionName"] != version_name
         or entry["versionCode"] != version_code
         or entry["filters"]
     ):
         raise SystemExit("The built APK must match the requested universal Beta.")
     source = APK_DIR / entry["outputFile"]
-    target = release_notes_path(version_name).parent / EXPECTED_ASSET_NAMES[0]
+    target = RELEASE_OUTPUT_DIR / version_name / EXPECTED_ASSET_NAMES[0]
+    target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
     return [target]
 
