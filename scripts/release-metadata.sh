@@ -93,8 +93,7 @@ elif [[ "$version_suffix" == rc.* ]]; then
     release_title="Release Candidate ${version_core} (${version_suffix#rc.})"
 fi
 release_prerelease="false"
-version_major="${current_version%%.*}"
-if [[ -n "$version_suffix" ]] && (( 10#$version_major >= 1 )); then
+if [[ -n "$version_suffix" ]]; then
     release_prerelease="true"
 fi
 current_bump_subject="$(git log -1 --format='%s' "$current_bump")"

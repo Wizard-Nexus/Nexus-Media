@@ -144,8 +144,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1082
-        versionName = "0.1.1"
+        versionCode = 1083
+        versionName = "0.1.2-beta.1"
 
         buildConfigField("String", "PARENTAL_GUIDE_API_URL", "\"${localProperties.getProperty("PARENTAL_GUIDE_API_URL", "")}\"")
         buildConfigField("String", "INTRODB_API_URL", "\"${localProperties.getProperty("INTRODB_API_URL", "")}\"")
@@ -290,6 +290,12 @@ android {
             buildConfigField("String", "PLAYBACK_REPORTS_BASE_URL", buildConfigString(localProperties.getProperty("PLAYBACK_REPORTS_BASE_URL", "")))
             buildConfigField("String", "PREMIUMIZE_CLIENT_ID", "\"${localProperties.getProperty("PREMIUMIZE_CLIENT_ID", "")}\"")
             buildConfigField("String", "SPONSOR_NAMES", buildConfigString(sponsorNames))
+        }
+        create("beta") {
+            initWith(buildTypes.getByName("release"))
+            applicationIdSuffix = ".beta"
+            matchingFallbacks += "release"
+            buildConfigField("String", "SENTRY_ENVIRONMENT", buildConfigString("beta"))
         }
         create("benchmark") {
             initWith(buildTypes.getByName("release"))
@@ -441,6 +447,10 @@ sentry {
     tracingInstrumentation {
         enabled.set(false)
     }
+}
+
+tasks.matching { it.name.startsWith("uploadSentryProguardMappings") }.configureEach {
+    onlyIf { sentryMappingUploadEnabled }
 }
 
 dependencies {

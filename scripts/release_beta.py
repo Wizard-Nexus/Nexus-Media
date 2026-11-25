@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -14,18 +15,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_FILE = ROOT / "app" / "build.gradle.kts"
 RELEASE_OUTPUT_DIR = ROOT / "build" / "release"
-APK_DIR = ROOT / "app" / "build" / "outputs" / "apk" / "release"
+APK_DIR = ROOT / "app" / "build" / "outputs" / "apk" / "full" / "beta"
 DEFAULT_BETA_NOTICE = (
     "## This is a beta version intended for testing only. Expect breaking changes "
     "in updates. Normal users are advised to wait for the stable release."
 )
-EXPECTED_ASSET_NAMES = [
-    "app-arm64-v8a-release.apk",
-    "app-armeabi-v7a-release.apk",
-    "app-x86_64-release.apk",
-    "app-x86-release.apk",
-    "app-universal-release.apk",
-]
+EXPECTED_ASSET_NAMES = ["Nexus-Media-Beta.apk"]
 VERSION_NAME_RE = re.compile(r'(?m)^(\s*versionName\s*=\s*")([^"]+)(")')
 VERSION_CODE_RE = re.compile(r"(?m)^(\s*versionCode\s*=\s*)(\d+)")
 VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
@@ -64,14 +59,6 @@ WORD_REPLACEMENTS = (
     (re.compile(r"\btrakt\b", re.IGNORECASE), "Trakt"),
     (re.compile(r"\bnuvio\b", re.IGNORECASE), "Nuvio"),
 )
-ASSET_ORDER = {
-    "arm64-v8a": 0,
-    "armeabi-v7a": 1,
-    "x86_64": 2,
-    "x86": 3,
-    "universal": 4,
-}
-
 
 def run(
     *args: str,
@@ -329,23 +316,26 @@ def ensure_version_available(release_tag: str) -> None:
         raise SystemExit(f"Tag already exists: {release_tag}")
 
 
-def build_release() -> list[Path]:
+def build_release(version_name: str, version_code: int) -> list[Path]:
+    gradle = ["cmd.exe", "/d", "/c", "gradlew.bat"] if os.name == "nt" else ["./gradlew"]
     subprocess.run(
-        ["./gradlew", "app:assembleRelease"],
+        [*gradle, ":app:assembleFullBeta", "--configure-on-demand", "-PnexusUniversalApk=true"],
         cwd=ROOT,
         check=True,
-        text=True,
     )
-    assets = sorted(
-        APK_DIR.glob("*.apk"),
-        key=lambda path: next(
-            (order for token, order in ASSET_ORDER.items() if token in path.name),
-            999,
-        ),
-    )
-    if not assets:
-        raise SystemExit(f"No APK assets found in {APK_DIR}")
-    return assets
+    metadata = json.loads((APK_DIR / "output-metadata.json").read_text(encoding="utf-8"))
+    [entry] = metadata["elements"]
+    if (
+        metadata["applicationId"] != "app.nexusmedia.tv.beta"
+        or entry["versionName"] != version_name
+        or entry["versionCode"] != version_code
+        or entry["filters"]
+    ):
+        raise SystemExit("The built APK must match the requested universal Beta.")
+    source = APK_DIR / entry["outputFile"]
+    target = release_notes_path(version_name).parent / EXPECTED_ASSET_NAMES[0]
+    shutil.copy2(source, target)
+    return [target]
 
 
 def commit_tag_push(
@@ -391,7 +381,7 @@ def is_github_prerelease(release_tag: str) -> bool:
         r"v?(\d+)\.\d+\.\d+(-[0-9A-Za-z.-]+)?",
         release_tag,
     )
-    return bool(match and int(match.group(1)) >= 1 and match.group(2))
+    return bool(match and match.group(2))
 
 
 def create_github_release(
@@ -414,13 +404,9 @@ def create_github_release(
         "--notes-file",
         str(notes_path),
     ]
-    prerelease = is_github_prerelease(release_tag)
-    if prerelease:
-        command.append("--prerelease")
+    command.extend(["--prerelease", "--latest=false", "--verify-tag"])
     if draft:
         command.append("--draft")
-    elif not prerelease:
-        command.append("--latest")
     subprocess.run(command, cwd=ROOT, check=True, text=True)
 
 
@@ -495,12 +481,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--publish",
         action="store_true",
-        help="Build all release APKs, commit the version bump, push tag/branch, and create the GitHub release.",
+        help="Build the universal Beta APK, commit the version bump, push tag/branch, and create the GitHub release.",
     )
     parser.add_argument(
         "--draft",
         action="store_true",
-        help="Build all release APKs, commit the version bump, push tag/branch, and create the GitHub release as a draft.",
+        help="Build the universal Beta APK, commit the version bump, push tag/branch, and create the GitHub release as a draft.",
     )
     return parser.parse_args()
 
@@ -542,12 +528,17 @@ def main() -> int:
         next_version_code = (
             args.version_code if args.version_code is not None else current_version_code + 1
         )
-        if next_version_code < 1:
-            raise SystemExit("versionCode must be a positive integer.")
-        release_tag = args.release_tag or target_version_name
+        if next_version_code <= current_version_code:
+            raise SystemExit("Beta versionCode must increase for each update.")
+        release_tag = args.release_tag or f"v{target_version_name}"
         release_title = args.release_title or release_tag
         commit_message = args.commit_message or f"release: {release_tag}"
         notes_key = target_version_name
+
+    if not is_github_prerelease(release_tag) or release_tag.removeprefix("v") != target_version_name:
+        raise SystemExit("The Beta tag must match the APK prerelease version.")
+    if (args.publish or args.draft) and current_branch() != "codex/beta":
+        raise SystemExit("Publish Beta from the codex/beta branch.")
 
     custom_notes = args.custom_notes
     if args.custom_notes_file:
@@ -615,7 +606,7 @@ def main() -> int:
 
     assets: list[Path] = []
     try:
-        assets = build_release()
+        assets = build_release(target_version_name, next_version_code)
         print("Built release assets:")
         for asset in assets:
             print(f"- {asset.relative_to(ROOT)}")
