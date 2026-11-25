@@ -309,7 +309,8 @@ def sync_channel(repo, state, channel, upstream, check):
     logging.info("Verifying Nexus %s from Nuvio %s in %s.", version[0], tag, workspace)
     try:
         with log_path.open("w", encoding="utf-8") as log:
-            run(POWERSHELL, "-NoProfile", "-NonInteractive", "-File", SCRIPTS / "verify-nexus-release.ps1",
+            run(POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "RemoteSigned",
+                "-File", SCRIPTS / "verify-nexus-release.ps1",
                 "-Repo", repo, "-Source", workspace, "-Output", output,
                 "-VersionName", version[0], "-VersionCode", version[1],
                 "-StableApk", stable_apk, *(["-BetaApk", beta_apk] if beta_apk else []),
