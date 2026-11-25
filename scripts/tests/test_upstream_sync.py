@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from sync_nuvio_releases import (
     SyncError,
+    digest,
+    finish_release,
     latest_beta,
     read_feed,
     verify_publication,
@@ -63,3 +68,41 @@ class UpstreamReleaseTests(unittest.TestCase):
         with self.assertRaises(SyncError):
             verify_publication(uploaded, {"channel": "stable", "digest": "sha256:expected"}, draft=True)
         verify_publication(uploaded, {"channel": "beta", "digest": "sha256:expected"}, draft=True)
+
+    def test_marks_stable_latest_only_on_publication(self):
+        with TemporaryDirectory(dir=Path.cwd()) as temporary:
+            repo = Path(temporary)
+            apk = repo / "Nexus-Media.apk"
+            apk.write_bytes(b"verified APK fixture")
+            asset_digest = digest(apk)
+            previous = release("v0.1.1")
+            draft = release("v0.1.3", draft=True)
+            draft["assets"] = [{"name": apk.name, "digest": asset_digest}]
+            published = dict(draft, draft=False)
+            pending = repo / "pending-stable.json"
+            pending.write_text(json.dumps({
+                "tag": draft["tag_name"], "channel": "stable", "apk": str(apk),
+                "digest": asset_digest, "upstream": "1.2.0-beta.4", "base": "previous",
+                "commit": "tested", "stable": previous["tag_name"], "beta": None,
+            }), encoding="utf-8")
+
+            with (
+                patch("sync_nuvio_releases.current_publications", side_effect=[
+                    (previous, None, [previous]),
+                    (previous, None, [draft, previous]),
+                    (published, None, [published, previous]),
+                ]),
+                patch("sync_nuvio_releases.remote_heads", return_value={"stable": "previous"}),
+                patch("sync_nuvio_releases.git"),
+                patch("sync_nuvio_releases.run") as gh,
+            ):
+                finish_release(repo, pending)
+
+            create, publish = (call.args for call in gh.call_args_list)
+            self.assertEqual(create[1:3], ("release", "create"))
+            self.assertIn("--draft", create)
+            self.assertIn("--latest=false", create)
+            self.assertEqual(publish[1:3], ("release", "edit"))
+            self.assertIn("--draft=false", publish)
+            self.assertIn("--latest", publish)
+            self.assertFalse(pending.exists())

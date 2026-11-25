@@ -240,18 +240,19 @@ def finish_release(repo, pending):
             "Automatic checks verified the Android TV upgrade before publication.\n",
             encoding="utf-8",
         )
-        flags = ["--prerelease", "--latest=false"] if channel == "beta" else ["--latest"]
+        prerelease_flags = ["--prerelease"] if channel == "beta" else []
+        latest_flag = "--latest=false" if channel == "beta" else "--latest"
         if release is None:
             run(GH, "release", "create", tag, str(apk), "--repo", FORK,
                 "--draft", "--verify-tag", "--title", f"Nexus Media {tag.removeprefix('v')}",
-                "--notes-file", notes, *flags, cwd=repo)
+                "--notes-file", notes, "--latest=false", *prerelease_flags, cwd=repo)
         elif not release["assets"]:
             run(GH, "release", "upload", tag, str(apk), "--repo", FORK, cwd=repo)
 
         _, _, releases = current_publications(repo)
         release = next((entry for entry in releases if entry["tag_name"] == tag), None)
         verify_publication(release, plan, draft=True)
-        run(GH, "release", "edit", tag, "--repo", FORK, "--draft=false", *flags, cwd=repo)
+        run(GH, "release", "edit", tag, "--repo", FORK, "--draft=false", latest_flag, *prerelease_flags, cwd=repo)
 
     stable, beta, releases = current_publications(repo)
     verified = next((entry for entry in releases if entry["tag_name"] == tag), None)
