@@ -103,19 +103,8 @@ val sentryMappingUploadEnabled = sentryAuthToken != null && sentryOrg != null &&
 
 fun env(name: String): String? = providers.environmentVariable(name).orNull
 
-fun truthy(value: String?): Boolean {
-    return value.equals("true", ignoreCase = true) ||
-        value.equals("1", ignoreCase = true) ||
-        value.equals("yes", ignoreCase = true)
-}
-
 val buildingAppBundle = gradle.startParameter.taskNames.any { it.contains("bundle", ignoreCase = true) }
 val useDebugReleaseSigning = env("CI_USE_DEBUG_SIGNING").equals("true", ignoreCase = true)
-val useLocalFfmpegDecoder = truthy(
-    providers.gradleProperty("useLocalFfmpegDecoder").orNull
-        ?: env("USE_LOCAL_FFMPEG_DECODER")
-        ?: localProperties.getProperty("USE_LOCAL_FFMPEG_DECODER")
-)
 val releaseStoreFilePath = env("NUVIO_RELEASE_STORE_FILE")
     ?: localProperties.getProperty("NUVIO_RELEASE_STORE_FILE")
 val releaseKeyAliasValue = env("NUVIO_RELEASE_KEY_ALIAS")
@@ -537,7 +526,7 @@ dependencies {
     ))
     add("fullImplementation", files("libs/lib-decoder-iamf-release.aar"))
     implementation(files("libs/lib-nuvio-engine-android-0.1.6.aar"))
-    if (useLocalFfmpegDecoder) {
+    if (rootProject.findProject(":ffmpeg-decoder-downmix") != null) {
         implementation(project(":ffmpeg-decoder-downmix"))
     } else {
         implementation(files("libs/lib-decoder-ffmpeg-release.aar"))
