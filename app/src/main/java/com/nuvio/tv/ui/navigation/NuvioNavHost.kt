@@ -36,6 +36,8 @@ import com.nuvio.tv.ui.screens.home.HomeScreen
 import com.nuvio.tv.ui.screens.addon.AddonManagerScreen
 import com.nuvio.tv.ui.screens.addon.CatalogOrderScreen
 import com.nuvio.tv.ui.screens.library.LibraryScreen
+import com.nuvio.tv.ui.screens.livetv.LiveTvScreen
+import com.nuvio.tv.ui.screens.livetv.LiveTvViewModel
 import com.nuvio.tv.ui.screens.player.PlayerExitReason
 import com.nuvio.tv.ui.screens.player.PlayerScreen
 import com.nuvio.tv.ui.screens.player.PostPlayRecommendation
@@ -1229,6 +1231,23 @@ private fun PlaybackNavHost(
                     )
                 }
             )
+        }
+
+        composable(Screen.LiveTv.route) { entry ->
+            val viewModel: LiveTvViewModel = androidx.hilt.navigation.compose.hiltViewModel(entry)
+            LiveTvScreen(viewModel) { channel ->
+                val url = viewModel.streamUrl(channel) ?: return@LiveTvScreen
+                if (navController.currentDestination?.route != Screen.LiveTv.route) return@LiveTvScreen
+                navController.navigate(
+                    Screen.Player.createRoute(
+                        streamUrl = url,
+                        title = channel.name,
+                        contentType = "channel",
+                        contentName = channel.name,
+                        profileId = viewModel.profileId
+                    )
+                )
+            }
         }
 
         composable(Screen.Library.route) {

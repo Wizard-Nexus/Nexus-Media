@@ -1,32 +1,22 @@
-<div align="center">
+# Nexus Media
 
-  <img src="assets/brand/app_logo_wordmark.png" alt="Nuvio" width="300" />
+Nexus Media is an Android TV and Google TV fork of [Nuvio TV](https://github.com/NuvioMedia/NuvioTV). It adds Live TV and a Sports view for Xtream playlists while retaining Nuvio's movie and series features.
 
-  <p>
-    A free, open-source media app for your phone, your desktop, and the TV you already own.
-    <br />
-    Bring your own sources. Nuvio turns them into a library with artwork, ratings, subtitles, and your place saved on every screen.
-  </p>
+## Install on a TV
 
-  [Website](https://nuvio.tv) · [GitHub releases](https://github.com/NuvioMedia/NuvioTV/releases/latest) · [Support Nuvio](https://nuvio.tv/support)
+Download [Nexus-Media.apk](https://github.com/AdminProMASS/Nexus-Media/releases/latest/download/Nexus-Media.apk) or paste that link into Downloader by AFTVnews. Open the APK and select **Install**. If your TV prompts you, allow Downloader to install apps.
 
-</div>
-
-## Get Nuvio TV
-
-- [Android TV on Google Play](https://play.google.com/store/apps/details?id=com.nuvio.app)
-- [Android TV APK](https://github.com/NuvioMedia/NuvioTV/releases/latest)
+Open **Live TV** to add your Xtream server and login or paste a full Xtream playlist URL. Nexus Media uses the sources you configure.
 
 ## Build from source
 
-```bash
-git clone https://github.com/NuvioMedia/NuvioTV.git
-cd NuvioTV
-./gradlew :app:assembleFullDebug
-```
+Use Android Studio or a JDK with Android SDK Platform 36 installed. Run the Gradle wrapper from this checkout.
 
-Nuvio TV is built with Kotlin, Jetpack Compose, TV Material 3, and Media3. Development requires Android Studio, a JDK, and the Android SDK.
+- Debug APK using the development package ID. Run `./gradlew :app:assembleFullDebug --configure-on-demand`.
+- Release APK. Set `NUVIO_RELEASE_STORE_FILE`, `NUVIO_RELEASE_STORE_PASSWORD`, `NUVIO_RELEASE_KEY_ALIAS`, and `NUVIO_RELEASE_KEY_PASSWORD` for your signing key. Run `./gradlew :app:assembleFullRelease --configure-on-demand`.
 
-## License
+For each TV update, increment the Android version code, keep the release app ID and key, and attach the universal APK as `Nexus-Media.apk` to the latest GitHub release. Tag the commit that produced the APK so the release's source archive matches the download.
 
-[GNU General Public License v3.0](./LICENSE)
+## Licence and attribution
+
+The app is licensed under the [GNU General Public License v3.0](./LICENSE). It is based on [Nuvio TV 1.1.1](https://github.com/NuvioMedia/NuvioTV/tree/4cb3e34). Upstream projects include [Nuvio Engine](https://github.com/NuvioMedia/nuvio-engine), [Nuvio libass](https://github.com/NuvioMedia/nuvio-libass), and [AndroidX Media3](https://github.com/androidx/media).

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="nexus_media_app_name" translatable="false">Nexus Media</string>
+    <string name="nav_live_tv">Live TV</string>
+    <string name="live_tv_xtream_title">Xtream source</string>
+    <string name="live_tv_xtream_help">Enter your server and login details, or paste an Xtream playlist URL in the server field.</string>
+    <string name="live_tv_server">Server address or playlist URL</string>
+    <string name="live_tv_username">Username</string>
+    <string name="live_tv_password">Password</string>
+    <string name="live_tv_connect">Connect</string>
+    <string name="live_tv_add_source">Add Xtream source</string>
+    <string name="live_tv_change_source">Change source</string>
+    <string name="live_tv_remove_source">Remove source</string>
+    <string name="live_tv_refresh">Refresh</string>
+    <string name="live_tv_loading">Loading channels…</string>
+    <string name="live_tv_empty">Add your Xtream source to watch live TV and sports.</string>
+    <string name="live_tv_all">All channels</string>
+    <string name="live_tv_sports">Sports</string>
+    <string name="live_tv_no_sports">Your source has no channels in a sports group.</string>
+    <string name="live_tv_invalid_source">Enter an HTTP or HTTPS server address and login, or a complete Xtream playlist URL.</string>
+    <string name="live_tv_credentials_rejected">The provider rejected your login. Check your details or subscription status.</string>
+    <string name="live_tv_no_channels">The provider returned no live channels.</string>
+    <string name="live_tv_connection_error">Couldn’t load live channels. Check the server address and try again.</string>
+    <string name="live_tv_storage_error">Couldn’t update the saved source. Please try again.</string>
+</resources>
