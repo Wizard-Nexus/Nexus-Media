@@ -41,6 +41,14 @@ Get-ChildItem Env: | Where-Object { $_.Name -match '^NUVIO_RELEASE_|^GH_TOKEN$|^
 
 $init = Join-Path $PSScriptRoot 'nexus-release.init.gradle'
 Push-Location -LiteralPath $Source
+$originalPath = $env:Path
+# AGP adds PATH entries to java.library.path for JVM unit tests.
+$env:Path = @(
+    (Join-Path $env:JAVA_HOME 'bin')
+    (Join-Path $env:SystemRoot 'System32')
+    $env:SystemRoot
+    (Join-Path $env:ProgramFiles 'Git/cmd')
+) -join ';'
 try {
     Invoke-Checked (Join-Path $Source 'gradlew.bat') @(
         '--init-script', $init, '--no-daemon', '--console=plain', '--configure-on-demand', '--max-workers=1',
@@ -51,6 +59,7 @@ try {
         '--tests', 'com.nuvio.tv.data.livetv.XtreamClientTest', '--tests', 'com.nuvio.tv.updater.*'
     )
 } finally {
+    $env:Path = $originalPath
     Pop-Location
 }
 

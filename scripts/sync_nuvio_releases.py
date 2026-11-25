@@ -273,8 +273,6 @@ def verify_publication(release, plan, *, draft):
 
 def sync_channel(repo, state, channel, upstream, check):
     pending = state / f"pending-{channel}.json"
-    if pending.exists() and not check:
-        finish_release(repo, pending)
     if upstream is None:
         return "No prerelease newer than upstream Stable."
 
@@ -355,6 +353,11 @@ def main():
         status = {"checked_at": datetime.now(timezone.utc).isoformat(), "mode": "check" if args.check else "publish"}
         failed = False
         try:
+            if args.publish:
+                for channel in ("stable", "beta"):
+                    pending = state / f"pending-{channel}.json"
+                    if pending.exists():
+                        finish_release(repo, pending)
             feed = read_feed(repo)
             for channel, release in feed.items():
                 try:
