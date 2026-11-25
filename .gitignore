@@ -48,6 +48,10 @@ scripts/*
 !scripts/release_notes/*.py
 !scripts/release-metadata.sh
 !scripts/release_beta.py
+!scripts/sync_nuvio_releases.py
+!scripts/verify-nexus-release.ps1
+!scripts/nexus-release.init.gradle
+!scripts/RELEASING.md
 !scripts/tests/
 !scripts/tests/*.py
 /supabase
