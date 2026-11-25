@@ -1,0 +1,15 @@
+// The release watcher signs with apksigner after Gradle exits.
+gradle.beforeProject { project ->
+    if (project.path == ':app') {
+        project.pluginManager.withPlugin('com.android.application') {
+            project.extensions.getByName('androidComponents').finalizeDsl { android ->
+                android.buildTypes.getByName('release').signingConfig = null
+            }
+        }
+        project.tasks.configureEach { task ->
+            if (task.name.startsWith('uploadSentryProguardMappings')) {
+                task.enabled = false
+            }
+        }
+    }
+}
