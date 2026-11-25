@@ -4,7 +4,7 @@ Nexus Media is an Android TV and Google TV fork of [Nuvio TV](https://github.com
 
 ## Install on a TV
 
-Download [Nexus-Media.apk](https://github.com/AdminProMASS/Nexus-Media/releases/latest/download/Nexus-Media.apk) or paste that link into Downloader by AFTVnews. Open the APK and select **Install**. If your TV prompts you, allow Downloader to install apps.
+Enter **6234336** in Downloader by AFTVnews or download [Nexus-Media.apk](https://github.com/Wizard-Nexus/Nexus-Media/releases/latest/download/Nexus-Media.apk). Open the APK and select **Install**. If your TV prompts you, allow Downloader to install apps.
 
 Open **Live TV** to add your Xtream server and login or paste a full Xtream playlist URL. Nexus Media uses the sources you configure.
 

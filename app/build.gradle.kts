@@ -166,7 +166,7 @@ android {
         buildConfigField("String", "SENTRY_DSN", buildConfigString(sentryDsn))
 
         // In-app updater (GitHub Releases)
-        buildConfigField("String", "GITHUB_OWNER", "\"AdminProMASS\"")
+        buildConfigField("String", "GITHUB_OWNER", "\"Wizard-Nexus\"")
         buildConfigField("String", "GITHUB_REPO", "\"Nexus-Media\"")
     }
 
