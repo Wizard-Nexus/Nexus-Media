@@ -129,24 +129,26 @@ function Confirm-AppLaunch {
 
 $emulatorArgs = @(
     '-avd', $avd, '-port', '5584', '-no-window', '-no-snapshot', '-no-boot-anim',
-    '-cores', '2', '-memory', '1536', '-gpu', 'host'
+    '-cores', '4', '-memory', '2048', '-gpu', 'host'
 )
 $emulatorLog = Join-Path $Output 'emulator.log'
 $emulatorErrors = Join-Path $Output 'emulator-error.log'
 $emulator = Start-Process -FilePath "$sdk/emulator/emulator.exe" -ArgumentList $emulatorArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput $emulatorLog -RedirectStandardError $emulatorErrors
 try {
-    $deadline = [DateTime]::UtcNow.AddSeconds(145)
+    $deadline = [DateTime]::UtcNow.AddSeconds(360)
     do {
         if ((& $adb devices) -match "^$serial\s+device$") {
-            $boot = & $adb -s $serial shell getprop sys.boot_completed
+            $boot = ((& $adb -s $serial shell getprop sys.boot_completed) -join "").Trim()
             if ($boot -eq '1') { break }
         }
         if ($emulator.HasExited) { throw 'The Android TV release test device exited during boot.' }
         Start-Sleep -Seconds 3
     } while ([DateTime]::UtcNow -lt $deadline)
-    if ($boot -ne '1' -or (& $adb -s $serial emu avd name | Select-Object -First 1) -ne $avd) {
-        throw 'Could not verify the dedicated Android TV release test device.'
+    if ($boot -ne '1') { throw 'The dedicated Android TV emulator did not finish booting in six minutes.' }
+    if ((& $adb -s $serial emu avd name | Select-Object -First 1) -ne $avd) {
+        throw 'Could not verify the identity of the dedicated Android TV release test device.'
     }
+    Write-Output 'The dedicated Android TV test device is ready.'
 
     foreach ($baseline in @($StableApk, $BetaApk) | Where-Object { $_ } | Select-Object -Unique) {
         Confirm-ApkSignature $baseline
