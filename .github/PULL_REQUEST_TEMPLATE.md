@@ -44,7 +44,7 @@
 
 <!-- ALL boxes must be checked or the PR will be closed without review. -->
 
-- [ ] I have read and understood `CONTRIBUTING.md`.
+- [ ] I have read and understood `docs/CONTRIBUTING.md`.
 - [ ] This PR fits an accepted contribution category.
 - [ ] Any feature, larger change, dependency addition, or architecture change has explicit maintainer approval.
 - [ ] This PR is focused on one problem or approved request.
