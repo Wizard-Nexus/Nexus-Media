@@ -3,7 +3,13 @@ gradle.beforeProject { project ->
     if (project.path == ':app') {
         project.pluginManager.withPlugin('com.android.application') {
             project.extensions.getByName('androidComponents').finalizeDsl { android ->
-                android.buildTypes.getByName('release').signingConfig = null
+                def release = android.buildTypes.getByName('release')
+                release.signingConfig = null
+                def ndkPath = project.providers.gradleProperty('nexusReleaseNdkPath').orNull
+                if (ndkPath) {
+                    android.ndkPath = ndkPath
+                    release.ndk.debugSymbolLevel = 'FULL'
+                }
             }
         }
         project.tasks.configureEach { task ->
