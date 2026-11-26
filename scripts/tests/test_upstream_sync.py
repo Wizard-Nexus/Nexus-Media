@@ -77,17 +77,19 @@ class UpstreamReleaseTests(unittest.TestCase):
     def test_marks_stable_latest_only_on_publication(self):
         with TemporaryDirectory(dir=Path.cwd()) as temporary:
             repo = Path(temporary)
-            apk = repo / "Nexus-Media.apk"
-            apk.write_bytes(b"verified APK fixture")
-            asset_digest = digest(apk)
-            previous = release("v0.1.1")
-            draft = release("v0.1.3", draft=True)
-            draft["assets"] = [{"name": apk.name, "digest": asset_digest}]
+            names = [ASSET, *DEVICE_ASSETS]
+            for name in names:
+                (repo / name).write_bytes(name.encode("ascii"))
+            digests = {name: digest(repo / name) for name in names}
+            previous = release("v0.1.3")
+            draft = release("v0.1.5", draft=True)
+            draft["assets"] = [{"name": name, "digest": sha} for name, sha in digests.items()]
             published = dict(draft, draft=False)
             pending = repo / "pending-stable.json"
             pending.write_text(json.dumps({
-                "tag": draft["tag_name"], "channel": "stable", "apk": str(apk),
-                "digest": asset_digest, "upstream": "1.2.0-beta.4", "base": "previous",
+                "tag": draft["tag_name"], "channel": "stable", "apk": str(repo / ASSET),
+                "digest": digests[ASSET], "device_digests": {name: digests[name] for name in DEVICE_ASSETS},
+                "upstream": "1.2.0-beta.4", "base": "previous",
                 "commit": "tested", "stable": previous["tag_name"], "beta": None,
             }), encoding="utf-8")
 
@@ -105,6 +107,7 @@ class UpstreamReleaseTests(unittest.TestCase):
 
             create, publish = (call.args for call in gh.call_args_list)
             self.assertEqual(create[1:3], ("release", "create"))
+            self.assertEqual(create[4:8], tuple(repo / name for name in names))
             self.assertIn("--draft", create)
             self.assertIn("--latest=false", create)
             self.assertEqual(publish[1:3], ("release", "edit"))

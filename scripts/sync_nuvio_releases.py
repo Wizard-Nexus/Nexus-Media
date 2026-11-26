@@ -18,10 +18,11 @@ from release_beta import parse_versions, updated_build_file
 UPSTREAM = "NuvioMedia/NuvioTV"
 FORK = "Wizard-Nexus/Nexus-Media"
 ASSET = "Nexus-Media.apk"
+INTEL_ASSET = "Nexus-Media-x86-x86_64.apk"
 DEVICE_ASSETS = (
     "Nexus-Media-arm64-v8a.apk",
     "Nexus-Media-armeabi-v7a.apk",
-    "Nexus-Media-x86-x86_64.apk",
+    INTEL_ASSET,
 )
 BUILD_FILE = Path("app/build.gradle.kts")
 SCRIPTS = Path(__file__).resolve().parent
@@ -224,17 +225,19 @@ def prepare_build_checkout(repo, workspace, commit):
         git(workspace, "switch", "--detach", "--quiet", "--no-overwrite-ignore", commit)
 
 
-def download_baseline(repo, state, release):
+def download_baseline(repo, state, release, *, asset_name=ASSET):
     tag = release["tag_name"]
-    assets = [asset for asset in release["assets"] if asset["name"] == ASSET]
+    if asset_name not in (ASSET, *DEVICE_ASSETS):
+        raise SyncError(f"Unexpected baseline APK name: {asset_name!r}.")
+    assets = [asset for asset in release["assets"] if asset["name"] == asset_name]
     if len(assets) != 1 or not assets[0]["digest"]:
-        raise SyncError(f"Could not identify the signed Nexus APK for {tag}.")
+        raise SyncError(f"Could not identify the signed Nexus APK {asset_name} for {tag}.")
     folder = state / "baselines" / tag
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / ASSET
+    path = folder / asset_name
     if not path.is_file():
         run(GH, "release", "download", tag, "--repo", FORK,
-            "--pattern", ASSET, "--dir", folder, cwd=repo)
+            "--pattern", asset_name, "--dir", folder, cwd=repo)
     if digest(path) != assets[0]["digest"]:
         # A failed download can be retried on the next run.
         path.unlink()
@@ -265,8 +268,8 @@ def expected_asset_digests(plan):
     devices = plan.get("device_digests")
     if devices is None:
         return {ASSET: plan["digest"]}
-    if plan["channel"] != "beta" or not isinstance(devices, dict) or set(devices) != set(DEVICE_ASSETS):
-        raise SyncError("Device APKs must match the complete Beta asset set.")
+    if not isinstance(devices, dict) or set(devices) != set(DEVICE_ASSETS):
+        raise SyncError("Device APKs must match the complete release asset set.")
     return {ASSET: plan["digest"], **devices}
 
 
@@ -374,11 +377,13 @@ def sync_channel(repo, state, channel, upstream, check):
     build_workspace = checkouts[channel]
     prepare_build_checkout(repo, build_workspace, commit)
     stable_apk = download_baseline(repo, state, stable)
-    beta_apk = download_baseline(repo, state, beta) if beta else None
+    beta_apk = None
+    if beta:
+        emulator_asset = INTEL_ASSET if any(asset["name"] == INTEL_ASSET for asset in beta["assets"]) else ASSET
+        beta_apk = download_baseline(repo, state, beta, asset_name=emulator_asset)
     output = state / "candidates" / version[0]
     output.mkdir(parents=True, exist_ok=True)
     log_path = output / "verification.log"
-    small_apks = ["-SmallApks"] if channel == "beta" else []
     logging.info("Verifying Nexus %s from Nuvio %s in %s.", version[0], tag, build_workspace)
     try:
         with log_path.open("w", encoding="utf-8") as log:
@@ -386,7 +391,7 @@ def sync_channel(repo, state, channel, upstream, check):
                 "-File", SCRIPTS / "verify-nexus-release.ps1",
                 "-Repo", repo, "-Source", build_workspace, "-Output", output,
                 "-VersionName", version[0], "-VersionCode", version[1],
-                "-StableApk", stable_apk, *(["-BetaApk", beta_apk] if beta_apk else []), *small_apks,
+                "-StableApk", stable_apk, *(["-BetaApk", beta_apk] if beta_apk else []), "-SmallApks",
                 cwd=repo, stdout=log)
     except (SyncError, subprocess.SubprocessError) as error:
         raise SyncError(f"Release verification failed. See {log_path}.") from error
@@ -397,8 +402,7 @@ def sync_channel(repo, state, channel, upstream, check):
     plan = {"channel": channel, "tag": f"v{version[0]}", "upstream": tag,
             "base": base, "commit": commit, "apk": str(apk), "digest": digest(apk),
             "stable": stable["tag_name"], "beta": beta and beta["tag_name"]}
-    if small_apks:
-        plan["device_digests"] = {name: digest(output / name) for name in DEVICE_ASSETS}
+    plan["device_digests"] = {name: digest(output / name) for name in DEVICE_ASSETS}
     write_json(pending, plan)
     finish_release(repo, pending)
     return f"Published Nexus v{version[0]} from Nuvio {tag}."

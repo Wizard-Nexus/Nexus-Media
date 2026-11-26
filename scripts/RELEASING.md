@@ -11,14 +11,14 @@ Use Android Studio or a JDK with Android SDK Platform 36 installed. Set `NUVIO_R
 
 Work on `codex/beta`. Use a prerelease version such as `0.1.2-beta.2` and increase the Android version code across both channels. Publish the signed `Nexus-Media.apk` from its matching source tag as a GitHub prerelease with **Latest** off. The Beta release script sets those flags.
 
-Once a Beta is verified on Android TV, promote its tested source to `codex/stable` and set a final version without the prerelease suffix. Verify the signed Stable APK upgrades the current Stable build and the Beta being promoted. Publish it as `Nexus-Media.apk` and mark that release **Latest** so the existing Downloader code serves it. Use package ID `app.nexusmedia.tv` and the same signing key for both channels.
+Once a Beta is verified on Android TV, promote its tested source to `codex/stable` and set a final version without the prerelease suffix. Verify the signed Stable APK upgrades the current Stable build and the Beta being promoted. Publish the signed universal and device APKs, then mark that release **Latest** so the existing Downloader code serves `Nexus-Media.apk`. Use package ID `app.nexusmedia.tv` and the same signing key for both channels.
 
 
 ## Upstream releases
 
 The **Nexus Media Upstream Releases** Windows task runs at sign-in and hourly while the release PC is signed in. It checks Nuvio TV's published Stable and Beta tags and prepares each merge in a separate Git worktree. A reusable detached build checkout for each channel keeps Gradle outputs across releases. The release build uses the Gradle daemon and local build cache, and reruns the release unit tests. Each APK must pass the app and updater unit tests, keep the Nexus Media signing certificate, and upgrade the previous app versions on a dedicated Android TV emulator. The existing signing setup is used locally after the build has finished.
 
-Beta publishes as a GitHub prerelease with the universal `Nexus-Media.apk` and smaller signed APKs for ARM64, ARMv7 and Intel. The TV updater selects the matching download. Both Intel architectures share one asset for compatibility with existing installations. The smaller builds use the pinned Android NDK r29 (`29.0.14206865`) at `.gradle/nexus-upstream/toolchains/android-ndk-r29`. The verification output keeps the native debug symbols separately for crash diagnosis.
+Beta and Stable both publish the universal `Nexus-Media.apk` and smaller signed APKs for ARM64, ARMv7 and Intel. The TV updater selects the matching download. Both Intel architectures share one asset for compatibility with existing installations. The smaller builds use the pinned Android NDK r29 (`29.0.14206865`) at `.gradle/nexus-upstream/toolchains/android-ndk-r29`. The verification output keeps the native debug symbols separately for crash diagnosis.
 
 A tested Stable release becomes the APK served by Downloader code **6234336**. The task records its last result in `.gradle/nexus-upstream/last-run.json`. A merge conflict leaves its worktree at `.gradle/nexus-upstream/preview-<channel>-<upstream-tag>`. Resolve and commit the merge there so a later run can build it. Failed builds include a verification log in `.gradle/nexus-upstream/candidates/<version>/verification.log`.
 
