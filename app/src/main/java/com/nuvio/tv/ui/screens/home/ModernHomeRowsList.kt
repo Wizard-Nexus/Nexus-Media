@@ -7,6 +7,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -143,7 +144,8 @@ internal fun ModernHomeRowsList(
     onFocusedHeroMediaNonceChange: (Int) -> Unit,
     onExpansionInteractionNonceChange: (Int) -> Unit,
     blockLeftOnFirstExpandedItem: Boolean = false,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    liveTvShortcuts: (@Composable () -> Unit)? = null
 ) {
     // Unwrap StableRef wrappers for internal use (not passed to child composables)
     val focusedItemByRowMap = focusedItemByRow.value
@@ -301,7 +303,8 @@ internal fun ModernHomeRowsList(
                         event.key == Key.DirectionDown &&
                         effectiveExpandEnabled &&
                         expandedCatalogFocusKey.value != null &&
-                        activeRowKey.value == lastRowKey
+                        activeRowKey.value == lastRowKey &&
+                        (liveTvShortcuts == null || firstRowKey != lastRowKey)
                     ) return@onPreviewKeyEvent true
                     val blockKey = if (layoutDirection == LayoutDirection.Rtl)
                         Key.DirectionRight else Key.DirectionLeft
@@ -367,7 +370,7 @@ internal fun ModernHomeRowsList(
                 items = carouselRows.list,
                 key = { index, row -> "${row.key}_$index" },
                 contentType = { _, row -> row.apiType ?: "modern_home_row" }
-            ) { _, row ->
+            ) { index, row ->
                 val stableOnContinueWatchingOptions = remember(onContinueWatchingOptions) {
                     { item: ContinueWatchingItem -> onContinueWatchingOptions(item) }
                 }
@@ -476,6 +479,16 @@ internal fun ModernHomeRowsList(
                         StableRef(mutableMapOf())
                     }
                 )
+                if (index == 0 && liveTvShortcuts != null) {
+                    Box(Modifier.padding(start = NuvioTheme.spacing.xl, end = NuvioTheme.spacing.xl, top = NuvioTheme.spacing.lg)) {
+                        liveTvShortcuts()
+                    }
+                }
+            }
+            if (carouselRows.list.isEmpty() && liveTvShortcuts != null) {
+                item(key = "live_tv_shortcuts") {
+                    Box(Modifier.padding(horizontal = NuvioTheme.spacing.xl)) { liveTvShortcuts() }
+                }
             }
         }
     }
