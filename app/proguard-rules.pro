@@ -120,6 +120,9 @@
 # so keep the whole package to avoid JNI lookup crashes after R8.
 -keep class is.xyz.mpv.** { *; }
 
+# LibVLC resolves Java callbacks and fields from native code.
+-keep class org.videolan.libvlc.** { *; }
+
 # ── Missing class stubs (referenced by cloudstream3 / jsoup / newpipe) ────────
 -dontwarn org.mozilla.javascript.**
 -dontwarn com.google.re2j.**

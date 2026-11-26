@@ -144,6 +144,9 @@ sealed class Screen(val route: String) {
     data object Discover : Screen("discover")
     data object Library : Screen("library")
     data object LiveTv : Screen("live-tv")
+    data object LiveTvVlc : Screen("live-tv-vlc/{profileId}/{channelId}") {
+        fun createRoute(profileId: Int, channelId: Long): String = "live-tv-vlc/$profileId/$channelId"
+    }
     data object Settings : Screen("settings")
     data object Tracking : Screen("trakt")
     data object WatchParty : Screen("watch_party?code={code}") {

@@ -80,6 +80,8 @@ private const val SherpaOnnxUrl = "https://github.com/k2-fsa/sherpa-onnx"
 private const val HazeLicenseUrl = "https://github.com/chrisbanes/haze/blob/1.7.2/LICENSE"
 private const val LibMpvAndroidUrl = "https://github.com/jarnedemeulemeester/libmpv-android"
 
+private const val LibVlcSourceUrl = "https://code.videolan.org/videolan/libvlcjni"
+
 private sealed interface LicenseLogo {
     data class Drawable(@param:DrawableRes val resId: Int) : LicenseLogo
     data class Raw(@param:RawRes val resId: Int) : LicenseLogo
@@ -419,6 +421,11 @@ private fun playbackLicenseItems() = listOf(
         title = stringResource(R.string.licenses_attributions_libmpv_title),
         body = stringResource(R.string.licenses_attributions_libmpv_body),
         url = LibMpvAndroidUrl
+    ),
+    LicenseAttributionItem(
+        title = "LibVLC 3.7.8",
+        body = stringResource(R.string.licenses_attributions_libvlc_body),
+        url = LibVlcSourceUrl
     ),
     LicenseAttributionItem(
         title = stringResource(R.string.licenses_attributions_audio_sync_title),

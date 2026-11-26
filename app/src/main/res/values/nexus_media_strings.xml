@@ -23,6 +23,15 @@
     <string name="live_tv_connection_error">Couldn’t load live channels. Check the server address and try again.</string>
     <string name="live_tv_storage_error">Couldn’t update the saved source. Please try again.</string>
 
+    <string name="live_tv_player">Live TV player</string>
+    <string name="live_tv_player_help">Choose a player and manage your playlist for this profile.</string>
+    <string name="live_tv_player_default">Use playback settings</string>
+    <string name="live_tv_open_settings">Live TV settings</string>
+    <string name="live_tv_source_connected">Xtream playlist connected</string>
+    <string name="live_tv_vlc_error">LibVLC couldn\'t play this channel.</string>
+    <string name="live_tv_vlc_loading">Opening channel…</string>
+    <string name="live_tv_vlc_pause">Pause</string>
+    <string name="live_tv_vlc_resume">Resume</string>
     <string name="live_tv_playlist">Playlist</string>
     <string name="live_tv_search">Search channels</string>
     <string name="live_tv_search_hint">Channel or category</string>
@@ -65,4 +74,5 @@
         <item quantity="one">Connection verified. %1$d channel is ready to save.</item>
         <item quantity="other">Connection verified. %1$d channels are ready to save.</item>
     </plurals>
+    <string name="licenses_attributions_libvlc_body">VideoLAN and VLC contributors · GNU Lesser General Public License v2.1</string>
 </resources>

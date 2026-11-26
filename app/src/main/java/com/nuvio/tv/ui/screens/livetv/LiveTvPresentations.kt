@@ -137,7 +137,7 @@ internal fun rememberLiveTvHomeShortcutsVisible(viewModel: LiveTvViewModel): Boo
 @Composable
 internal fun LiveTvHomeShortcuts(
     viewModel: LiveTvViewModel,
-    onPlay: (LiveChannel) -> Boolean
+    onPlay: (LiveChannel, List<LiveChannel>) -> Boolean
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val channels = state.catalog?.channels.orEmpty()
@@ -157,14 +157,14 @@ internal fun LiveTvHomeShortcuts(
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(3.dp)) {
                     items(favourites, key = { it.id }) { channel ->
                         val current = state.guide[channel.id].orEmpty().nowAndNext(now).first
-                        LiveTvShortcut(channel.name, current?.title, Modifier.width(192.dp)) { onPlay(channel) }
+                        LiveTvShortcut(channel.name, current?.title, Modifier.width(192.dp)) { onPlay(channel, favourites) }
                     }
                 }
             }
             if (events.isNotEmpty()) {
                 Text(stringResource(R.string.live_tv_home_sports), style = MaterialTheme.typography.titleMedium)
                 LiveTvSportsStrip(events, now) { event ->
-                    if (event.programme.isOnAir(now)) onPlay(event.channel) else selectedEvent = event
+                    if (event.programme.isOnAir(now)) onPlay(event.channel, sports) else selectedEvent = event
                 }
             }
         }
@@ -172,7 +172,7 @@ internal fun LiveTvHomeShortcuts(
     selectedEvent?.let { event ->
         LiveTvEventDialog(event, onWatch = {
             selectedEvent = null
-            onPlay(event.channel)
+            onPlay(event.channel, sports)
         }, onDismiss = { selectedEvent = null })
     }
 }

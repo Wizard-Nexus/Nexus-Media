@@ -49,8 +49,10 @@ import com.nuvio.tv.ui.screens.addon.AddonManagerScreen
 import com.nuvio.tv.ui.screens.addon.CatalogOrderScreen
 import com.nuvio.tv.ui.screens.library.LibraryScreen
 import com.nuvio.tv.data.livetv.LiveChannel
+import com.nuvio.tv.data.livetv.LiveTvPlayer
 import com.nuvio.tv.ui.screens.livetv.LiveTvHomeShortcuts
 import com.nuvio.tv.ui.screens.livetv.LiveTvScreen
+import com.nuvio.tv.ui.screens.livetv.LiveTvVlcScreen
 import com.nuvio.tv.ui.screens.livetv.rememberLiveTvHomeShortcutsVisible
 import com.nuvio.tv.ui.screens.player.LiveTvPlayerControls
 import com.nuvio.tv.ui.screens.livetv.LiveTvViewModel
@@ -130,24 +132,29 @@ private fun PlaybackNavHost(
     fun playLiveChannel(
         channel: LiveChannel,
         fromRoute: String,
+        channelList: List<LiveChannel>? = null,
         releasePrevious: (() -> Unit)? = null
     ): Boolean {
         val origin = navController.currentBackStackEntry ?: return false
         if (origin.destination.route != fromRoute) return false
         val clickedAt = SystemClock.elapsedRealtime()
-        val url = liveTv.tune(channel) ?: return false
-        releasePrevious?.invoke()
-        navController.navigate(
+        val url = liveTv.tune(channel, channelList) ?: return false
+        val state = liveTv.state.value
+        val route = if (state.player == LiveTvPlayer.LIBVLC) {
+            Screen.LiveTvVlc.createRoute(state.profileId, channel.id)
+        } else {
             Screen.Player.createRoute(
                 streamUrl = url,
                 title = channel.name,
                 contentType = "channel",
                 contentName = channel.name,
                 launchStartedAtMs = clickedAt,
-                profileId = liveTv.state.value.profileId,
+                profileId = state.profileId,
                 liveChannelId = channel.id
             )
-        ) {
+        }
+        releasePrevious?.invoke()
+        navController.navigate(route) {
             if (releasePrevious != null) popUpTo(origin.destination.id) { inclusive = true }
         }
         return true
@@ -331,7 +338,7 @@ private fun PlaybackNavHost(
             val liveShortcutsVisible = rememberLiveTvHomeShortcutsVisible(liveTv)
             HomeScreen(
                 liveTvShortcuts = if (liveShortcutsVisible) {
-                    { LiveTvHomeShortcuts(liveTv) { channel -> playLiveChannel(channel, Screen.Home.route) } }
+                    { LiveTvHomeShortcuts(liveTv) { channel, list -> playLiveChannel(channel, Screen.Home.route, list) } }
                 } else null,
                 onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
                     val heroBackdrop = HeroBackdropState.consumeAndClear()
@@ -1015,7 +1022,7 @@ private fun PlaybackNavHost(
                         profileId = liveProfileId,
                         onTune = { channel, release ->
                             if (navController.currentBackStackEntry != backStackEntry) false
-                            else playLiveChannel(channel, Screen.Player.route, release)
+                            else playLiveChannel(channel, Screen.Player.route, releasePrevious = release)
                         }
                     )
                 } else null,
@@ -1344,7 +1351,32 @@ private fun PlaybackNavHost(
         }
 
         rootComposable(Screen.LiveTv.route) {
-            LiveTvScreen(liveTv) { channel -> playLiveChannel(channel, Screen.LiveTv.route) }
+            LiveTvScreen(
+                viewModel = liveTv,
+                onPlay = { channel, list -> playLiveChannel(channel, Screen.LiveTv.route, list) },
+                onOpenSettings = {
+                    navController.navigate(Screen.Settings.route)
+                    navController.currentBackStackEntry?.savedStateHandle?.set("openLiveTvSettings", true)
+                }
+            )
+        }
+
+        composable(
+            route = Screen.LiveTvVlc.route,
+            arguments = listOf(
+                navArgument("profileId") { type = NavType.IntType },
+                navArgument("channelId") { type = NavType.LongType }
+            )
+        ) { entry ->
+            val args = requireNotNull(entry.arguments)
+            LiveTvVlcScreen(
+                viewModel = liveTv,
+                profileId = args.getInt("profileId"),
+                initialChannelId = args.getLong("channelId"),
+                onExit = {
+                    if (navController.currentBackStackEntry == entry) navController.popBackStack()
+                }
+            )
         }
 
         rootComposable(Screen.Library.route) {
@@ -1380,8 +1412,12 @@ private fun PlaybackNavHost(
             )
         }
 
-        rootComposable(Screen.Settings.route) {
+        rootComposable(Screen.Settings.route) { entry ->
+            val startInLiveTv by entry.savedStateHandle.getStateFlow("openLiveTvSettings", false)
+                .collectAsStateWithLifecycle()
             SettingsScreen(
+                liveTv = liveTv,
+                startInLiveTv = startInLiveTv,
                 showBuiltInHeader = !hideBuiltInHeaders,
                 onNavigateToAddons = { navController.navigate(Screen.AddonManager.route) },
                 onNavigateToPlugins = { navController.navigate(Screen.Plugins.route) },

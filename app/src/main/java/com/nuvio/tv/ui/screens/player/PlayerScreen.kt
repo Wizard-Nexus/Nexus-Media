@@ -185,6 +185,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.tv.data.livetv.LiveChannel
 import com.nuvio.tv.ui.screens.livetv.LiveTvChannelPicker
 import com.nuvio.tv.ui.screens.livetv.LiveTvViewModel
+import com.nuvio.tv.ui.screens.livetv.handleLiveTvRemoteKey
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -700,6 +701,12 @@ internal fun PlayerScreen(
     // Controls and menus drawn over HDR video get the HDR brightness when the user enables it;
     // the video surface and its subtitles are never inside this layer.
     val playerControlsDim = Modifier.playerControlsBrightness(uiState.playerControlsBrightness)
+    val panelOrDialogOpen = uiState.showEpisodesPanel || uiState.showSourcesPanel || uiState.showPartyPanel ||
+        uiState.showChaptersPanel || uiState.showAudioOverlay || uiState.showSubtitleOverlay ||
+        uiState.showSubtitleStylePanel || uiState.showSpeedDialog || uiState.showDiscTitlesDialog ||
+        uiState.showSubtitleDelayOverlay || uiState.showSubtitleTimingDialog || uiState.showMoreDialog ||
+        shouldConfirmNextEpisodeOnEnd || uiState.postPlayMode is PostPlayMode.StillWatching ||
+        postPlayRecommendationState.isVisible || uiState.error != null
 
     Box(
         modifier = Modifier
@@ -737,6 +744,23 @@ internal fun PlayerScreen(
                         else -> true
                     }
                 }
+
+                if (liveTvControls != null && !panelOrDialogOpen && !showChannelPicker &&
+                    !uiState.showStreamInfoOverlay &&
+                    handleLiveTvRemoteKey(
+                        event = keyEvent.nativeKeyEvent,
+                        controlsVisible = uiState.showControls && !uiState.showPauseOverlay,
+                        onStep = { offset ->
+                            liveTvControls.viewModel.adjacentChannel(
+                                liveTvControls.profileId, liveTvControls.currentId, offset
+                            )?.let(::switchChannel)
+                        },
+                        onOpenControls = {
+                            if (uiState.showPauseOverlay) viewModel.onEvent(PlayerEvent.OnDismissPauseOverlay)
+                            if (!uiState.showControls) viewModel.onEvent(PlayerEvent.OnToggleControls)
+                        }
+                    )
+                ) return@onPreviewKeyEvent true
 
                 val keyCode = keyEvent.nativeKeyEvent.keyCode
                 if (keyCode != KeyEvent.KEYCODE_CAPTIONS && keyCode != KeyEvent.KEYCODE_MEDIA_AUDIO_TRACK) {
@@ -891,18 +915,8 @@ internal fun PlayerScreen(
                     }
                 }
 
-                // When a side panel or dialog is open, let it handle all keys
-                val panelOrDialogOpen = uiState.showEpisodesPanel || uiState.showSourcesPanel || uiState.showPartyPanel ||
-                        uiState.showChaptersPanel ||
-                        uiState.showAudioOverlay || uiState.showSubtitleOverlay ||
-                        uiState.showSubtitleStylePanel || (uiState.showSpeedDialog || uiState.showDiscTitlesDialog) ||
-                        uiState.showSubtitleDelayOverlay || uiState.showSubtitleTimingDialog ||
-                        uiState.showMoreDialog ||
-                        shouldConfirmNextEpisodeOnEnd ||
-                        uiState.postPlayMode is PostPlayMode.StillWatching ||
-                        postPlayRecommendationState.isVisible ||
-                        uiState.error != null
-                if (panelOrDialogOpen) return@onKeyEvent false
+                // When a side panel or dialog is open, let it handle all keys.
+                if (panelOrDialogOpen || showChannelPicker) return@onKeyEvent false
 
                 if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_UP) {
                     when (keyEvent.nativeKeyEvent.keyCode) {

@@ -148,8 +148,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1087
-        versionName = "0.1.5-beta.1"
+        versionCode = 1089
+        versionName = "0.1.6-beta.1"
 
         buildConfigField("String", "PARENTAL_GUIDE_API_URL", "\"${localProperties.getProperty("PARENTAL_GUIDE_API_URL", "")}\"")
         buildConfigField("String", "INTRODB_API_URL", "\"${localProperties.getProperty("INTRODB_API_URL", "")}\"")
@@ -485,7 +485,25 @@ val downloadAudioSyncRuntime by tasks.registering {
     }
 }
 
+val libVlcArchive by configurations.creating {
+    isCanBeConsumed = false
+    isTransitive = false
+}
+
+val packageLibVlc by tasks.registering(org.gradle.api.tasks.bundling.Zip::class) {
+    from({ zipTree(libVlcArchive.singleFile) })
+    // Share the app's newer C++ runtime so the existing players keep their required symbols.
+    exclude("jni/**/libc++_shared.so")
+    archiveFileName.set("libvlc-all.aar")
+    destinationDirectory.set(layout.buildDirectory.dir("generated/libvlc"))
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+}
+
 dependencies {
+    add(libVlcArchive.name, "org.videolan.android:libvlc-all:3.7.8@aar")
+    implementation(files(packageLibVlc.flatMap { it.archiveFile }).builtBy(packageLibVlc))
+    implementation("androidx.legacy:legacy-support-v4:1.0.0")
     implementation(files(sherpaOnnxAar).builtBy(downloadAudioSyncRuntime))
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     val composeBom = platform("androidx.compose:compose-bom:2026.05.01")

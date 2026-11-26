@@ -12,6 +12,7 @@ import com.nuvio.tv.core.server.XtreamPhoneSetupServer
 import com.nuvio.tv.data.livetv.LiveChannel
 import com.nuvio.tv.data.livetv.LiveProgramme
 import com.nuvio.tv.data.livetv.LiveTvHistory
+import com.nuvio.tv.data.livetv.LiveTvPlayer
 import com.nuvio.tv.data.livetv.LiveTvStorage
 import com.nuvio.tv.data.livetv.XtreamCatalog
 import com.nuvio.tv.data.livetv.XtreamClient
@@ -40,6 +41,7 @@ import javax.inject.Inject
 
 internal data class LiveTvState(
     val profileId: Int,
+    val player: LiveTvPlayer = LiveTvPlayer.DEFAULT,
     val catalog: XtreamCatalog? = null,
     val sourceKey: String? = null,
     val hasSource: Boolean = false,
@@ -71,6 +73,7 @@ internal class LiveTvViewModel @Inject constructor(
         var source: XtreamSource? = null
         var refreshedAt: Long? = null
         var ready = false
+        var tuningOrder: List<Long>? = null
         val loadingGuide = mutableSetOf<Long>()
         val guideCheckedAt = mutableMapOf<Long, Long>()
     }
@@ -102,15 +105,20 @@ internal class LiveTvViewModel @Inject constructor(
         profile = active
         _state.value = LiveTvState(id)
         scope.launch {
-            val saved = withContext(Dispatchers.IO) {
+            val (player, saved) = withContext(Dispatchers.IO) {
                 val source = storage.readSource(id)
-                Triple(source, source?.let { storage.readCatalog(id, it) }, source?.let { storage.readHistory(id, it) })
+                storage.readPlayer(id) to Triple(
+                    source,
+                    source?.let { storage.readCatalog(id, it) },
+                    source?.let { storage.readHistory(id, it) }
+                )
             }
             if (profile !== active) return@launch
             active.source = saved.first
             active.ready = true
             _state.value = LiveTvState(
                 profileId = id,
+                player = player,
                 catalog = saved.second,
                 sourceKey = saved.first?.cacheKey,
                 history = saved.third ?: LiveTvHistory(),
@@ -151,6 +159,12 @@ internal class LiveTvViewModel @Inject constructor(
         return true
     }
 
+    fun setPlayer(player: LiveTvPlayer) {
+        val active = currentProfile() ?: return
+        storage.writePlayer(active.id, player)
+        _state.update { it.copy(player = player) }
+    }
+
     fun clearError() = _state.update { it.copy(error = null) }
 
     fun disconnect() {
@@ -161,20 +175,44 @@ internal class LiveTvViewModel @Inject constructor(
         active.scope.launch {
             if (!storeSource(active, null)) return@launch
             active.source = null
+            active.tuningOrder = null
             active.refreshedAt = null
             active.guideCheckedAt.clear()
             active.loadingGuide.clear()
             withContext(Dispatchers.IO) { storage.clearCatalog(active.id) }
-            _state.value = LiveTvState(active.id, loading = false)
+            _state.value = LiveTvState(active.id, player = _state.value.player, loading = false)
         }
     }
 
-    fun tune(channel: LiveChannel): String? {
-        val source = currentProfile()?.source ?: return null
-        val catalog = _state.value.catalog ?: return null
-        if (catalog.channels.none { it.id == channel.id }) return null
+    fun tune(channel: LiveChannel, channelList: List<LiveChannel>? = null): String? {
+        val active = currentProfile() ?: return null
+        val url = streamUrl(active.id, channel.id) ?: return null
+        if (channelList != null) {
+            active.tuningOrder = channelList.map { it.id }
+        } else if (active.tuningOrder?.contains(channel.id) != true) {
+            // A manual pick outside the current list starts tuning in the new channel's group.
+            active.tuningOrder = _state.value.catalog?.channels
+                ?.filter { it.group == channel.group }?.map { it.id }
+        }
         _state.update { it.copy(lastTunedChannelId = channel.id) }
-        return source.streamUrl(channel.id, catalog.format).toString()
+        return url
+    }
+
+    fun streamUrl(profileId: Int, channelId: Long): String? {
+        val source = currentProfile()?.takeIf { it.id == profileId }?.source ?: return null
+        val catalog = _state.value.catalog ?: return null
+        if (catalog.channels.none { it.id == channelId }) return null
+        return source.streamUrl(channelId, catalog.format).toString()
+    }
+
+    fun adjacentChannel(profileId: Int, currentId: Long, offset: Int): LiveChannel? {
+        val active = currentProfile()?.takeIf { it.id == profileId } ?: return null
+        val channels = _state.value.catalog?.channels ?: return null
+        val index = channels.associateBy { it.id }
+        val current = index[currentId] ?: return null
+        val order = active.tuningOrder?.mapNotNull(index::get) ?: channels.filter { it.group == current.group }
+        val position = order.indexOfFirst { it.id == currentId }
+        return if (position >= 0) order.getOrNull(position + offset) else null
     }
 
     fun toggleFavourite(channelId: Long) = updateHistory { it.toggleFavourite(channelId) }
@@ -326,7 +364,10 @@ internal class LiveTvViewModel @Inject constructor(
             if (sameAccount) null else storage.readHistory(active.id, source)
         }
         if (oldSource !== source) active.loadingGuide.clear()
-        if (!sameAccount) active.guideCheckedAt.clear()
+        if (!sameAccount) {
+            active.guideCheckedAt.clear()
+            active.tuningOrder = null
+        }
         active.source = source
         active.refreshedAt = SystemClock.elapsedRealtime()
         _state.update {

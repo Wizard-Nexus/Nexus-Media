@@ -29,6 +29,11 @@ internal data class LiveTvHistory(
         recent.firstOrNull { it != currentId && isAvailable(it) }
 }
 
+internal enum class LiveTvPlayer {
+    DEFAULT,
+    LIBVLC
+}
+
 @Singleton
 internal class LiveTvStorage @Inject constructor(@ApplicationContext context: Context) : ProfileScopedCredentialStore {
     private val credentials = ProtectedProfilePreferences(context, "nexus_iptv", "app.nexusmedia.tv.iptv.v1")
@@ -38,6 +43,14 @@ internal class LiveTvStorage @Inject constructor(@ApplicationContext context: Co
     private val cacheLock = Any()
     private val _resetVersion = MutableStateFlow(0)
     val resetVersion = _resetVersion.asStateFlow()
+
+    fun readPlayer(profileId: Int): LiveTvPlayer = runCatching {
+        LiveTvPlayer.valueOf(history.getString("profile.$profileId.player", null).orEmpty())
+    }.getOrDefault(LiveTvPlayer.DEFAULT)
+
+    fun writePlayer(profileId: Int, player: LiveTvPlayer) {
+        history.edit().putString("profile.$profileId.player", player.name).apply()
+    }
 
     fun readSource(profileId: Int): XtreamSource? = runCatching {
         credentials.read(profileId)?.let {

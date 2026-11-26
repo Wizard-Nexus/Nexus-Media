@@ -37,6 +37,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.filled.BugReport
@@ -95,6 +96,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.R
+import com.nuvio.tv.ui.screens.livetv.LiveTvViewModel
 import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.domain.model.ExperienceMode
 import com.nuvio.tv.domain.model.SettingsUiStyle
@@ -163,6 +165,7 @@ private fun settingsSectionSpec(category: SettingsCategory): SettingsSectionSpec
     SettingsCategory.LAYOUT -> SettingsSectionSpec(category, stringResource(R.string.settings_layout), Icons.Default.GridView, destination = SettingsSectionDestination.Inline)
     SettingsCategory.CONTENT_DISCOVERY -> SettingsSectionSpec(category, stringResource(R.string.settings_content_discovery), Icons.Default.Explore, destination = SettingsSectionDestination.Inline)
     SettingsCategory.PLAYBACK -> SettingsSectionSpec(category, stringResource(R.string.settings_playback), Icons.Rounded.PlayArrow, destination = SettingsSectionDestination.Inline)
+    SettingsCategory.LIVE_TV -> SettingsSectionSpec(category, stringResource(R.string.nav_live_tv), Icons.Default.LiveTv, destination = SettingsSectionDestination.Inline)
     SettingsCategory.INTEGRATION -> SettingsSectionSpec(category, stringResource(R.string.settings_integration), Icons.Default.Link, destination = SettingsSectionDestination.Inline)
     SettingsCategory.TRACKING -> SettingsSectionSpec(category, stringResource(R.string.settings_tracking_title), Icons.Default.Sync, destination = SettingsSectionDestination.Inline)
     SettingsCategory.ADVANCED -> SettingsSectionSpec(category, stringResource(R.string.settings_advanced), Icons.Default.Build, destination = SettingsSectionDestination.Inline)
@@ -172,7 +175,9 @@ private fun settingsSectionSpec(category: SettingsCategory): SettingsSectionSpec
 }
 
 @Composable
-fun SettingsScreen(
+internal fun SettingsScreen(
+    liveTv: LiveTvViewModel,
+    startInLiveTv: Boolean = false,
     showBuiltInHeader: Boolean = true,
     onNavigateToAddons: () -> Unit = {},
     onNavigateToPlugins: () -> Unit = {},
@@ -218,9 +223,10 @@ fun SettingsScreen(
 
     val isRtl = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
     val isHorizonStyle = NuvioTheme.settingsUiStyle == SettingsUiStyle.HORIZON
-    var selectedCategory by rememberSaveable {
+    var selectedCategory by rememberSaveable(startInLiveTv) {
         mutableStateOf(
-            visibleSections.firstOrNull()?.category ?: SettingsCategory.APPEARANCE
+            if (startInLiveTv) SettingsCategory.LIVE_TV
+            else visibleSections.firstOrNull()?.category ?: SettingsCategory.APPEARANCE
         )
     }
     val railFocusRequesters = remember(visibleSections) {
@@ -237,6 +243,7 @@ fun SettingsScreen(
             SettingsCategory.INTEGRATION to FocusRequester(),
             SettingsCategory.TRACKING to FocusRequester(),
             SettingsCategory.PLAYBACK to FocusRequester(),
+            SettingsCategory.LIVE_TV to FocusRequester(),
             SettingsCategory.ADVANCED to FocusRequester(),
             SettingsCategory.ABOUT to FocusRequester(),
             SettingsCategory.ACCOUNT to FocusRequester()
@@ -641,6 +648,7 @@ fun SettingsScreen(
                         ) { animatedCategory ->
                             SettingsDetailPane(
                                 selectedCategory = animatedCategory,
+                                liveTv = liveTv,
                                 isEssentialMode = isEssentialMode,
                                 allowDetailAutofocus = allowDetailAutofocus,
                                 contentFocusRequesters = contentFocusRequesters,
@@ -802,6 +810,7 @@ fun SettingsScreen(
                 ) {
                     SettingsDetailPane(
                         selectedCategory = selectedCategory,
+                        liveTv = liveTv,
                         isEssentialMode = isEssentialMode,
                         allowDetailAutofocus = allowDetailAutofocus,
                         contentFocusRequesters = contentFocusRequesters,
@@ -837,6 +846,7 @@ fun SettingsScreen(
 
 @Composable
 private fun SettingsDetailPane(
+    liveTv: LiveTvViewModel,
     selectedCategory: SettingsCategory,
     isEssentialMode: Boolean,
     allowDetailAutofocus: Boolean,
@@ -898,6 +908,10 @@ private fun SettingsDetailPane(
                 null
             },
             essentialMode = isEssentialMode
+        )
+        SettingsCategory.LIVE_TV -> LiveTvSettingsContent(
+            viewModel = liveTv,
+            initialFocusRequester = contentFocusRequesters[SettingsCategory.LIVE_TV].takeIf { allowDetailAutofocus }
         )
         SettingsCategory.PLAYBACK -> if (isEssentialMode) {
             EssentialPlaybackSettingsContent(
