@@ -2472,6 +2472,9 @@ private fun navigateToDrawerRoute(
         return
     }
     try {
+        // Close the guide's setup shortcut before saving the guide as a sidebar tab.
+        if (navController.popLiveTvSetupShortcut() && targetRoute == Screen.LiveTv.route) return
+
         navController.navigate(targetRoute) {
             popUpTo(navController.graph.startDestinationId) {
                 saveState = true
@@ -2479,9 +2482,20 @@ private fun navigateToDrawerRoute(
             launchSingleTop = true
             restoreState = true
         }
+
+        // An older build may have already saved the setup screen above the guide.
+        if (targetRoute == Screen.LiveTv.route) navController.popLiveTvSetupShortcut()
     } catch (e: IllegalArgumentException) {
         Log.w("NuvioNavigation", "Route not found in nav graph: $targetRoute", e)
     }
+}
+
+private fun NavHostController.popLiveTvSetupShortcut(): Boolean {
+    if (currentDestination?.route != Screen.Settings.route ||
+        previousBackStackEntry?.destination?.route != Screen.LiveTv.route
+    ) return false
+
+    return popBackStack()
 }
 
 private fun isBlockedContentKey(key: Key): Boolean {
