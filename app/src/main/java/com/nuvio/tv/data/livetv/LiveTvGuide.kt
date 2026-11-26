@@ -14,7 +14,8 @@ import java.util.Base64
 internal data class LiveProgramme(
     val title: String,
     val startsAt: Long,
-    val endsAt: Long
+    val endsAt: Long,
+    val description: String? = null
 ) {
     fun isOnAir(now: Long): Boolean = now in startsAt until endsAt
 }
@@ -45,8 +46,9 @@ internal fun parseXtreamGuide(response: JsonObject, providerZone: ZoneId?): List
         val start = entry.time("start_timestamp", "start", providerZone) ?: return@mapNotNull null
         val end = entry.time("stop_timestamp", "end", providerZone) ?: return@mapNotNull null
         if (end <= start) return@mapNotNull null
-        LiveProgramme(title, start, end)
-    }.distinct().sortedBy { it.startsAt }
+        val description = entry.value("description")?.let(::guideText)
+        LiveProgramme(title, start, end, description)
+    }.distinctBy { Triple(it.startsAt, it.endsAt, it.title) }.sortedBy { it.startsAt }
 }
 
 private fun JsonObject.value(key: String): String? =

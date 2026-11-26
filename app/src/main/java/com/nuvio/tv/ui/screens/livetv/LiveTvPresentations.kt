@@ -7,10 +7,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -19,15 +17,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -42,7 +32,6 @@ import com.nuvio.tv.data.livetv.LiveSportsEvent
 import com.nuvio.tv.data.livetv.liveSportsEvents
 import com.nuvio.tv.data.livetv.nowAndNext
 import com.nuvio.tv.ui.components.NuvioDialog
-import com.nuvio.tv.ui.screens.account.InputField
 import com.nuvio.tv.ui.theme.NuvioTheme
 import kotlinx.coroutines.delay
 import java.time.Instant
@@ -110,9 +99,13 @@ internal fun LiveTvEventDialog(event: LiveSportsEvent, onWatch: () -> Unit, onDi
         onDismiss = onDismiss,
         title = event.programme.title,
         subtitle = stringResource(
-            R.string.live_tv_event_starts, formatProgrammeTime(event.programme.startsAt), event.channel.name
+            R.string.live_tv_guide_event_time, event.channel.name,
+            formatProgrammeTime(event.programme.startsAt), formatProgrammeTime(event.programme.endsAt)
         )
     ) {
+        event.programme.description?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 5, overflow = TextOverflow.Ellipsis)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
             Button(onClick = onWatch) { Text(stringResource(R.string.live_tv_watch_channel)) }
@@ -174,73 +167,6 @@ internal fun LiveTvHomeShortcuts(
             selectedEvent = null
             onPlay(event.channel, sports)
         }, onDismiss = { selectedEvent = null })
-    }
-}
-
-@Composable
-internal fun LiveTvChannelPicker(
-    viewModel: LiveTvViewModel,
-    currentId: Long,
-    onPlay: (LiveChannel) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
-    val channels = state.catalog?.channels.orEmpty()
-    var query by remember { mutableStateOf("") }
-    val ordered = remember(channels, state.history, currentId) {
-        val channelIndex = channels.associateBy { it.id }
-        val priority = (listOf(currentId) + state.history.favourites + state.history.recent).distinct().mapNotNull(channelIndex::get)
-        val selectedIds = priority.map { it.id }.toHashSet()
-        priority + channels.filter { it.id !in selectedIds }
-    }
-    val matches = remember(ordered, query) { ordered.filter { it.matchesLiveTvSearch(query) } }
-    val listState = rememberLazyListState()
-    val firstChannel = remember { FocusRequester() }
-    val now = liveGuideClock()
-
-    NuvioDialog(
-        title = stringResource(R.string.live_tv_channel_picker),
-        width = 620.dp,
-        onDismiss = onDismiss,
-        contentSpacing = 8.dp
-    ) {
-        InputField(
-            value = query,
-            onValueChange = { query = it },
-            placeholder = stringResource(R.string.live_tv_search_hint),
-            imeAction = ImeAction.Done,
-            onImeAction = { if (matches.isNotEmpty()) runCatching { firstChannel.requestFocus() } },
-            modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
-                event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && matches.isNotEmpty() &&
-                    runCatching { firstChannel.requestFocus() }.getOrDefault(false)
-            }
-        )
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxWidth().heightIn(max = 206.dp),
-            contentPadding = PaddingValues(4.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            if (matches.isEmpty()) {
-                item { Text(stringResource(R.string.live_tv_search_empty), color = NuvioTheme.colors.TextSecondary) }
-            }
-            items(matches, key = { it.id }) { channel ->
-                val current = state.guide[channel.id].orEmpty().nowAndNext(now).first
-                val label = if (channel.id == currentId) stringResource(R.string.live_tv_current_channel, channel.name) else channel.name
-                LiveTvShortcut(
-                    label,
-                    current?.title,
-                    Modifier.fillMaxWidth().then(
-                        if (channel.id == matches.first().id) Modifier.focusRequester(firstChannel) else Modifier
-                    ),
-                    onClick = { if (channel.id == currentId) onDismiss() else onPlay(channel) }
-                )
-            }
-        }
-        LaunchedEffect(query) { listState.scrollToItem(0) }
-        LaunchedEffect(Unit) {
-            if (matches.isNotEmpty()) runCatching { firstChannel.requestFocus() }
-        }
     }
 }
 

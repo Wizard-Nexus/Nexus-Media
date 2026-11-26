@@ -2312,7 +2312,8 @@ private fun ModernSidebarScaffold(
             if (
                 !sidebarCollapsed &&
                 sidebarShowCollapsedPill &&
-                selectedDrawerRoute != Screen.Search.route
+                selectedDrawerRoute != Screen.Search.route &&
+                selectedDrawerRoute != Screen.LiveTv.route
             ) {
                 CollapsedSidebarPill(
                     label = selectedDrawerItem.label,

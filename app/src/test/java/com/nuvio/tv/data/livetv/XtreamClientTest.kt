@@ -20,7 +20,7 @@ class XtreamClientTest {
                 """[{"category_id":"12","category_name":"AU Sports"},{"category_id":18,"category_name":"Local"}]"""
             ))
             server.enqueue(MockResponse().setBody(
-                """[{"stream_id":"101","name":"Test Sports","category_id":12},
+                """[{"stream_id":"101","name":"Test Sports","category_id":12,"stream_icon":"https://images.example.test/sport.png"},
                    {"stream_id":102,"name":"Test News","category_id":"18"},
                    {"stream_id":true,"name":"Invalid entry"}]"""
             ))
@@ -30,6 +30,8 @@ class XtreamClientTest {
 
             assertEquals(listOf("Test Sports", "Test News"), catalog.channels.map { it.name })
             assertTrue(catalog.channels.first().isSports)
+            assertEquals("https://images.example.test/sport.png", catalog.channels.first().logoUrl)
+            assertNull(catalog.channels.last().logoUrl)
             assertFalse(catalog.channels.last().isSports)
             assertEquals("m3u8", catalog.format)
             assertEquals("/iptv/live/aa+bb/p%2Fa%3Fs/101.m3u8", source.streamUrl(101, catalog.format).encodedPath)
@@ -55,6 +57,42 @@ class XtreamClientTest {
         assertEquals("viewer", source.username)
         assertEquals("x+y", source.password)
         assertEquals("/custom/live/viewer/x+y/9.ts", source.streamUrl(9, "ts").encodedPath)
+    }
+
+    @Test
+    fun fullGuideRetainsEarlierAndLaterListingsWithDescriptions() {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody(
+                """{"epg_listings":[
+                    {"title":"Earlier news","start_timestamp":1795608000,"stop_timestamp":1795609800},
+                    {"title":"Later news","start_timestamp":1795611600,"stop_timestamp":1795613400,
+                     "description":"TmV3cyBhbmQgd2VhdGhlci4="}]}"""
+            ))
+            val source = checkNotNull(XtreamSource.from(server.url("/").toString(), "viewer", "password"))
+            val programmes = XtreamClient().guide(source, 42, "UTC", full = true)
+
+            assertEquals(listOf("Earlier news", "Later news"), programmes.map { it.title })
+            assertEquals("News and weather.", programmes.last().description)
+            val request = checkNotNull(server.takeRequest().requestUrl)
+            assertEquals("get_simple_data_table", request.queryParameter("action"))
+            assertEquals("42", request.queryParameter("stream_id"))
+            assertNull(request.queryParameter("limit"))
+        }
+    }
+
+    @Test
+    fun switchesToShortGuideWhenTheProviderHasNoFullTable() {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(404))
+            server.enqueue(MockResponse().setBody("""{"epg_listings":[]}"""))
+            val source = checkNotNull(XtreamSource.from(server.url("/").toString(), "viewer", "password"))
+
+            assertTrue(XtreamClient().guide(source, 42, "UTC", full = true).isEmpty())
+            assertEquals("get_simple_data_table", server.takeRequest().requestUrl?.queryParameter("action"))
+            val request = checkNotNull(server.takeRequest().requestUrl)
+            assertEquals("get_short_epg", request.queryParameter("action"))
+            assertEquals("16", request.queryParameter("limit"))
+        }
     }
 
     @Test

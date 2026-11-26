@@ -1,16 +1,21 @@
 package com.nuvio.tv.ui.screens.livetv
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
@@ -18,6 +23,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -34,14 +41,14 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Button
-import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.LocalContentFocusRequester
@@ -49,13 +56,12 @@ import com.nuvio.tv.R
 import com.nuvio.tv.data.livetv.LiveChannel
 import com.nuvio.tv.data.livetv.LiveProgramme
 import com.nuvio.tv.data.livetv.LiveSportsEvent
-import com.nuvio.tv.data.livetv.nowAndNext
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.screens.account.InputField
-import com.nuvio.tv.ui.theme.NuvioTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
+import kotlin.math.roundToLong
 
 private enum class LiveTvSection(val label: Int) {
     ALL(R.string.live_tv_all),
@@ -64,6 +70,8 @@ private enum class LiveTvSection(val label: Int) {
     GUIDE(R.string.live_tv_guide),
     SPORTS(R.string.live_tv_sports)
 }
+
+private val GuideSections = listOf(LiveTvSection.FAVOURITES, LiveTvSection.ALL, LiveTvSection.RECENT, LiveTvSection.SPORTS)
 
 @Composable
 internal fun LiveTvScreen(
@@ -76,196 +84,325 @@ internal fun LiveTvScreen(
         viewModel.setLiveTvVisible(true)
         onDispose { viewModel.setLiveTvVisible(false) }
     }
-    key(state.profileId) { LiveTvContent(state, viewModel, onPlay, onOpenSettings) }
+    val firstFocus = LocalContentFocusRequester.current
+    if (state.catalog?.channels.isNullOrEmpty()) {
+        LiveTvEmptyGuide(state, firstFocus, onOpenSettings)
+    } else {
+        key(state.profileId, state.sourceKey) {
+            LiveTvGuideContent(state, viewModel, firstFocus, onPlay)
+        }
+    }
 }
 
 @Composable
-private fun LiveTvContent(
+internal fun LiveTvChannelPicker(
+    viewModel: LiveTvViewModel,
+    currentId: Long,
+    onPlay: (LiveChannel) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val firstFocus = remember { FocusRequester() }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        key(state.profileId, state.sourceKey, currentId) {
+            LiveTvGuideContent(
+                state, viewModel, firstFocus,
+                onPlay = { channel, _ ->
+                    if (channel.id == currentId) onDismiss() else onPlay(channel)
+                    true
+                },
+                initialChannelId = currentId,
+                onDismiss = onDismiss
+            )
+        }
+    }
+}
+
+@Composable
+private fun LiveTvEmptyGuide(state: LiveTvState, firstFocus: FocusRequester, onOpenSettings: () -> Unit) {
+    Box(Modifier.fillMaxSize().background(GuideRail), contentAlignment = Alignment.Center) {
+        Column(
+            modifier = Modifier.padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(13.dp)
+        ) {
+            Text(stringResource(R.string.live_tv_guide), style = MaterialTheme.typography.headlineLarge)
+            val message = state.error ?: if (state.loading) R.string.live_tv_loading else R.string.live_tv_empty
+            Text(stringResource(message), color = GuideMuted)
+            if (!state.loading) {
+                GuideButton(stringResource(R.string.live_tv_open_settings), onOpenSettings, Modifier.focusRequester(firstFocus))
+                LaunchedEffect(firstFocus) {
+                    withFrameNanos { }
+                    runCatching { firstFocus.requestFocus() }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveTvGuideContent(
     state: LiveTvState,
     viewModel: LiveTvViewModel,
+    firstFocus: FocusRequester,
     onPlay: (LiveChannel, List<LiveChannel>) -> Boolean,
-    onOpenSettings: () -> Unit
+    initialChannelId: Long? = null,
+    onDismiss: (() -> Unit)? = null
 ) {
     val channels = state.catalog?.channels.orEmpty()
-    val groups = remember(channels) { channels.mapNotNull { it.group }.distinct().sorted() }
+    val channelIndex = remember(channels) { channels.associateBy { it.id } }
+    val groups = remember(channels) { channels.mapNotNull { it.group }.distinct() }
+    val sports = remember(channels) { channels.filter { it.isSports } }
+    val favouriteIds = remember(state.history.favourites) { state.history.favourites.toHashSet() }
     var section by rememberSaveable { mutableStateOf(LiveTvSection.ALL) }
-    var group by rememberSaveable { mutableStateOf<String?>(null) }
+    var group by rememberSaveable { mutableStateOf(channelIndex[initialChannelId]?.group) }
     var query by rememberSaveable { mutableStateOf("") }
     var searching by remember { mutableStateOf(false) }
     var eventDetails by remember { mutableStateOf<LiveSportsEvent?>(null) }
-    var restoreChannelOnReturn by rememberSaveable { mutableStateOf(false) }
-    val restoreOnEntry = remember { restoreChannelOnReturn }
-    var initialFocusPlaced by remember { mutableStateOf(false) }
-    val firstFocus = LocalContentFocusRequester.current
-    val channelFocus = remember { FocusRequester() }
-    val listState = rememberLazyListState()
-    val now = liveGuideClock()
-    val channelsById = remember(channels) { channels.associateBy { it.id } }
-    val sportsChannels = remember(channels) { channels.filter { it.isSports } }
-    val candidates = remember(channels, channelsById, section, state.history, group) {
-        when {
+    var categoriesVisible by rememberSaveable { mutableStateOf(initialChannelId == null) }
+    var restorePlaybackFocus by rememberSaveable { mutableStateOf(false) }
+    var placedFocus by remember { mutableStateOf(false) }
+    val restoreId = remember { initialChannelId ?: state.lastTunedChannelId.takeIf { restorePlaybackFocus } }
+
+    val items = remember(channels, channelIndex, sports, section, group, query, state.history) {
+        val filtered = when {
             group != null -> channels.filter { it.group == group }
-            section == LiveTvSection.FAVOURITES -> state.history.favourites.mapNotNull(channelsById::get)
-            section == LiveTvSection.RECENT -> state.history.recent.mapNotNull(channelsById::get)
-            section == LiveTvSection.SPORTS -> sportsChannels
+            section == LiveTvSection.FAVOURITES -> state.history.favourites.mapNotNull(channelIndex::get)
+            section == LiveTvSection.RECENT -> state.history.recent.mapNotNull(channelIndex::get)
+            section == LiveTvSection.SPORTS -> sports
             else -> channels
         }
+        filtered.filter { it.matchesLiveTvSearch(query) }
     }
-    val visible = remember(candidates, query) { candidates.filter { it.matchesLiveTvSearch(query) } }
-    val restoreId = state.lastTunedChannelId.takeIf { restoreOnEntry && !initialFocusPlaced }
-    val showSports = section == LiveTvSection.SPORTS && group == null
-    val sportsSeedIds = remember(sportsChannels) { sportsChannels.take(12).map { it.id } }
-    val events = remember(showSports, sportsChannels, state.guide, now) {
-        if (showSports) featuredSportsEvents(sportsChannels, state.guide, now, 6) else emptyList()
-    }
-    val play: (LiveChannel) -> Unit = { channel ->
-        val channelList = if (visible.any { it.id == channel.id }) visible else candidates
-        if (onPlay(channel, channelList)) restoreChannelOnReturn = true
+    val rowState = rememberLazyListState()
+    val railState = rememberLazyListState()
+    val categoryFocus = remember { FocusRequester() }
+    val rowFocus = remember { FocusRequester() }
+    var railFocusRequest by remember { mutableIntStateOf(0) }
+    var highlightedId by remember { mutableStateOf(restoreId) }
+    var browsingTime by rememberSaveable { mutableLongStateOf(0L) }
+    var windowAnchor by rememberSaveable { mutableLongStateOf(0L) }
+    val now = liveGuideClock()
+    val targetRow = highlightedId?.let { highlighted -> items.firstOrNull { it.id == highlighted } } ?: items.firstOrNull()
+    val programmeTime = browsingTime.takeIf { it != 0L } ?: now
+    val highlighted = targetRow?.takeIf { highlightedId == it.id }
+    val currentProgrammes = state.guide[highlighted?.id].orEmpty()
+    val selectedProgramme = currentProgrammes.firstOrNull { it.isOnAir(programmeTime) }
+    val sectionKey = if (section == LiveTvSection.GUIDE) LiveTvSection.ALL else section
+
+    fun showCategories() {
+        categoriesVisible = true
+        railFocusRequest++
     }
 
-    LaunchedEffect(section, query, group, channels.isNotEmpty()) {
-        if ((!restoreOnEntry || initialFocusPlaced) && channels.isNotEmpty()) listState.scrollToItem(0)
+    fun clearTimeSelection() {
+        browsingTime = 0L
+        windowAnchor = 0L
     }
-    LaunchedEffect(restoreId, visible, state.loading) {
-        if (initialFocusPlaced || (state.loading && channels.isEmpty())) return@LaunchedEffect
-        if (restoreId != null && restoreId in channelsById) {
-            val index = visible.indexOfFirst { it.id == restoreId }
-            if (index < 0) {
-                section = LiveTvSection.ALL
-                group = null
-                query = ""
-                return@LaunchedEffect
-            }
-            listState.scrollToItem(index)
-            snapshotFlow { listState.layoutInfo.visibleItemsInfo.any { it.key == restoreId } }.first { it }
-            withFrameNanos { }
-            runCatching { channelFocus.requestFocus() }
+
+    fun resetList() {
+        clearTimeSelection()
+        highlightedId = null
+    }
+
+    fun play(channel: LiveChannel) {
+        if (onPlay(channel, items)) restorePlaybackFocus = true
+    }
+
+    fun select(channel: LiveChannel, programme: LiveProgramme?) {
+        if (programme == null || programme.isOnAir(now)) {
+            play(channel)
         } else {
-            withFrameNanos { }
-            runCatching { firstFocus.requestFocus() }
+            eventDetails = LiveSportsEvent(channel, programme)
         }
-        initialFocusPlaced = true
-        restoreChannelOnReturn = false
     }
-    LaunchedEffect(listState, state.sourceKey, now / 60_000) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.mapNotNull { it.key as? Long } }
+
+    LaunchedEffect(section, group, query) {
+        if (placedFocus) rowState.scrollToItem(0)
+    }
+    LaunchedEffect(groups) {
+        if (group != null && group !in groups) group = null
+    }
+    LaunchedEffect(items, restoreId) {
+        if (placedFocus || items.isEmpty() && restoreId != null && state.loading) return@LaunchedEffect
+        val restoreIndex = items.indexOfFirst { it.id == restoreId }
+        if (restoreId != null && restoreIndex < 0 && (group != null || query.isNotBlank() || section != LiveTvSection.ALL)) {
+            section = LiveTvSection.ALL
+            group = null
+            query = ""
+            return@LaunchedEffect
+        }
+        if (restoreIndex >= 0) {
+            rowState.scrollToItem(restoreIndex)
+            snapshotFlow { rowState.layoutInfo.visibleItemsInfo.any { it.key == restoreId } }.first { it }
+        }
+        withFrameNanos { }
+        if (restoreIndex >= 0 || !categoriesVisible && items.isNotEmpty()) {
+            val focused = runCatching { rowFocus.requestFocus() }.getOrDefault(false)
+            if (!focused && categoriesVisible) runCatching { categoryFocus.requestFocus() }
+        } else if (categoriesVisible) {
+            runCatching { categoryFocus.requestFocus() }
+        }
+        placedFocus = true
+        restorePlaybackFocus = false
+    }
+    LaunchedEffect(railFocusRequest, categoriesVisible) {
+        if (!categoriesVisible || railFocusRequest == 0) return@LaunchedEffect
+        val groupIndex = groups.indexOf(group)
+        val index = if (groupIndex < 0) GuideSections.indexOf(sectionKey) else GuideSections.size + 1 + groupIndex
+        railState.scrollToItem(index.coerceAtLeast(0))
+        withFrameNanos { }
+        runCatching { categoryFocus.requestFocus() }
+    }
+    LaunchedEffect(rowState, state.sourceKey, now / 60_000L) {
+        snapshotFlow { rowState.layoutInfo.visibleItemsInfo.mapNotNull { it.key as? Long } }
             .collectLatest { ids ->
                 if (ids.isNotEmpty()) {
-                    delay(180)
-                    viewModel.requestGuide(ids)
+                    delay(160)
+                    viewModel.requestGuide(ids, full = true)
                 }
             }
     }
-    LaunchedEffect(showSports, state.sourceKey, sportsSeedIds, now / 60_000) {
-        if (showSports) viewModel.requestGuide(sportsSeedIds)
+    val showSports = section == LiveTvSection.SPORTS && group == null && highlighted == null
+    val sportsSeeds = remember(sports) { sports.take(12).map { it.id } }
+    LaunchedEffect(showSports, state.sourceKey, sportsSeeds, now / 60_000L) {
+        if (showSports) viewModel.requestGuide(sportsSeeds, full = true)
     }
+    val featured = remember(showSports, sports, state.guide, now) {
+        if (showSports) featuredSportsEvents(sports, state.guide, now, 6) else emptyList()
+    }
+    BackHandler(!categoriesVisible && !searching && eventDetails == null) { showCategories() }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(start = 36.dp, end = 36.dp, top = 28.dp, bottom = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(stringResource(R.string.nav_live_tv), style = MaterialTheme.typography.headlineLarge, modifier = Modifier.weight(1f))
-            if (channels.isNotEmpty()) {
-                Button(
-                    onClick = { searching = true },
-                    modifier = Modifier.focusRequester(firstFocus)
-                ) { Text(stringResource(R.string.live_tv_search)) }
-            }
+    BoxWithConstraints(Modifier.fillMaxSize().background(GuideRail)) {
+        val detailsHeight = maxHeight * .405f
+        val railWidth = maxWidth * .244f
+        val channelWidth = (maxWidth * .273f).coerceAtMost(272.dp)
+        val timelineWidth = (maxWidth - channelWidth - if (categoriesVisible) railWidth else 0.dp).coerceAtLeast(1.dp)
+        val halfHourWidth = (maxWidth * .18f).coerceIn(128.dp, 184.dp)
+        val windowDuration = (timelineWidth.value.toDouble() / halfHourWidth.value * GUIDE_STEP_MS)
+            .roundToLong().coerceAtLeast(1L)
+        val window = GuideWindow(windowAnchor.takeIf { it != 0L } ?: guideTimeFloor(now), windowDuration, timelineWidth)
+        val bounds = remember(currentProgrammes, state.guide, now) {
+            val listings = if (currentProgrammes.isEmpty()) state.guide.values else listOf(currentProgrammes)
+            val earliest = listings.minOfOrNull { it.firstOrNull()?.startsAt ?: now } ?: now
+            val latest = listings.maxOfOrNull { it.lastOrNull()?.endsAt ?: now } ?: now
+            guideTimeFloor(minOf(earliest, now)) to maxOf(latest, now)
         }
-        val status = state.error ?: if (state.loading) {
-            if (channels.isEmpty()) R.string.live_tv_loading else R.string.live_tv_refreshing
-        } else null
-        status?.let { Text(stringResource(it), color = NuvioTheme.colors.TextSecondary) }
+        val pageDuration = (window.duration / GUIDE_STEP_MS).coerceAtLeast(1L) * GUIDE_STEP_MS
 
-        if (channels.isEmpty()) {
-            if (!state.loading) {
-                if (state.error == null) {
-                    Text(stringResource(R.string.live_tv_empty), color = NuvioTheme.colors.TextSecondary)
-                }
-                Button(onClick = onOpenSettings, modifier = Modifier.focusRequester(firstFocus)) {
-                    Text(stringResource(R.string.live_tv_open_settings))
+        fun reveal(time: Long) {
+            browsingTime = time
+            if (time !in window.start until window.end) windowAnchor = guideTimeFloor(time)
+        }
+
+        fun page(forward: Boolean) {
+            val next = if (forward) window.start + pageDuration else (window.start - pageDuration).coerceAtLeast(bounds.first)
+            windowAnchor = next
+            browsingTime = next
+        }
+
+        Column(Modifier.fillMaxSize()) {
+            val status = state.error ?: R.string.live_tv_refreshing.takeIf { state.loading }
+            LiveTvGuideHeader(
+                channel = highlighted, programme = selectedProgramme, date = programmeTime, now = now,
+                status = status?.let { stringResource(it) },
+                canGoEarlier = window.start > bounds.first,
+                canGoLater = window.end < bounds.second,
+                categoriesVisible = categoriesVisible,
+                onSearch = { searching = true },
+                onNow = ::clearTimeSelection,
+                onEarlier = { page(false) },
+                onLater = { page(true) },
+                onCategories = ::showCategories,
+                onWatch = highlighted?.let { channel -> { play(channel) } },
+                onDismiss = onDismiss,
+                modifier = Modifier.height(detailsHeight)
+            ) {
+                if (showSports && featured.isNotEmpty()) {
+                    LiveTvSportsStrip(featured, now) { event -> select(event.channel, event.programme) }
                 }
             }
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(18.dp)
-            ) {
-                LazyColumn(
-                    modifier = Modifier.width(178.dp).fillMaxHeight(),
-                    contentPadding = PaddingValues(4.dp),
-                    verticalArrangement = Arrangement.spacedBy(7.dp)
-                ) {
-                    items(LiveTvSection.entries, key = { it.name }) { next ->
-                        LiveTvFilter(stringResource(next.label), section == next && group == null) {
-                            section = next
+            Row(Modifier.fillMaxWidth().weight(1f)) {
+                if (categoriesVisible) {
+                    LiveTvCategoryRail(
+                        groups, railState, sectionKey, group, categoryFocus, firstFocus,
+                        onSection = { selected ->
+                            section = selected
                             group = null
-                        }
-                    }
-                    items(groups, key = { "group-$it" }) { next ->
-                        LiveTvFilter(next, group == next) { group = next }
-                    }
+                            query = ""
+                            resetList()
+                        },
+                        onGroup = { selected ->
+                            group = selected
+                            query = ""
+                            resetList()
+                        },
+                        enterChannels = { items.isNotEmpty() && runCatching { rowFocus.requestFocus() }.getOrDefault(false) },
+                        modifier = Modifier.width(railWidth).fillMaxHeight()
+                    )
                 }
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            if (query.isBlank()) group ?: stringResource(section.label)
-                            else stringResource(R.string.live_tv_search_results, query.trim()),
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (query.isNotBlank()) {
-                            Button(onClick = { query = "" }) { Text(stringResource(R.string.live_tv_clear_search)) }
+                Box(Modifier.weight(1f).fillMaxHeight()) {
+                    Column(Modifier.fillMaxSize()) {
+                        Row(Modifier.fillMaxWidth().height(22.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                if (query.isNotBlank()) stringResource(R.string.live_tv_search_results, query.trim())
+                                else group ?: stringResource(sectionKey.label),
+                                modifier = Modifier.width(channelWidth).padding(horizontal = 10.dp),
+                                color = GuideAccent,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            GuideRuler(window)
                         }
-                    }
-                    if (showSports) {
-                        LiveTvSportsStrip(events, now, R.string.live_tv_sports_guide_empty) { event ->
-                            if (event.programme.isOnAir(now)) play(event.channel) else eventDetails = event
-                        }
-                    }
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxWidth().weight(1f),
-                        contentPadding = PaddingValues(4.dp),
-                        verticalArrangement = Arrangement.spacedBy(7.dp)
-                    ) {
-                        if (visible.isEmpty()) {
-                            item {
-                                val empty = when {
-                                    query.isNotBlank() -> R.string.live_tv_search_empty
-                                    section == LiveTvSection.FAVOURITES -> R.string.live_tv_favourites_empty
-                                    section == LiveTvSection.RECENT -> R.string.live_tv_recent_empty
-                                    section == LiveTvSection.SPORTS -> R.string.live_tv_no_sports
-                                    else -> R.string.live_tv_no_matching_channels
+                        LazyColumn(state = rowState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 8.dp)) {
+                            if (items.isEmpty()) {
+                                item {
+                                    val empty = when {
+                                        query.isNotBlank() -> R.string.live_tv_search_empty
+                                        section == LiveTvSection.FAVOURITES -> R.string.live_tv_favourites_empty
+                                        section == LiveTvSection.RECENT -> R.string.live_tv_recent_empty
+                                        section == LiveTvSection.SPORTS -> R.string.live_tv_no_sports
+                                        else -> R.string.live_tv_no_matching_channels
+                                    }
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text(stringResource(empty), color = GuideMuted)
+                                        if (query.isNotBlank()) {
+                                            GuideButton(stringResource(R.string.live_tv_clear_search), { query = ""; resetList() })
+                                        }
+                                    }
                                 }
-                                Text(stringResource(empty), color = NuvioTheme.colors.TextSecondary)
+                            }
+                            items(items, key = { it.id }) { channel ->
+                                LiveTvGuideRow(
+                                    channel = channel,
+                                    programmes = state.guide[channel.id].orEmpty(),
+                                    window = window,
+                                    selectedTime = programmeTime,
+                                    now = now,
+                                    channelWidth = channelWidth,
+                                    favourite = channel.id in favouriteIds,
+                                    categoryRailVisible = categoriesVisible,
+                                    onChannelFocus = { highlightedId = channel.id },
+                                    onProgrammeFocus = {
+                                        highlightedId = channel.id
+                                        categoriesVisible = false
+                                    },
+                                    onBrowse = ::reveal,
+                                    onOpenCategories = ::showCategories,
+                                    onSelect = { programme -> select(channel, programme) },
+                                    onFavourite = { viewModel.toggleFavourite(channel.id) },
+                                    modifier = if (channel.id == targetRow?.id) {
+                                        Modifier.focusRequester(rowFocus).then(
+                                            if (categoriesVisible) Modifier else Modifier.focusRequester(firstFocus)
+                                        )
+                                    } else Modifier
+                                )
                             }
                         }
-                        items(visible, key = { it.id }) { channel ->
-                            val (current, next) = state.guide[channel.id].orEmpty().nowAndNext(now)
-                            LiveTvChannelRow(
-                                channel = channel,
-                                current = current,
-                                next = next,
-                                favourite = channel.id in state.history.favourites,
-                                showGuide = section == LiveTvSection.GUIDE && group == null,
-                                modifier = if (channel.id == restoreId) Modifier.focusRequester(channelFocus) else Modifier,
-                                onPlay = { play(channel) },
-                                onFavourite = { viewModel.toggleFavourite(channel.id) }
-                            )
-                        }
                     }
+                    GuideNowLine(window, now, Modifier.align(Alignment.TopEnd))
                 }
             }
         }
@@ -279,6 +416,7 @@ private fun LiveTvContent(
                 group = null
                 query = it
                 searching = false
+                resetList()
             },
             onDismiss = { searching = false }
         )
@@ -296,85 +434,73 @@ private fun LiveTvContent(
 }
 
 @Composable
-private fun LiveTvChannelRow(
-    channel: LiveChannel,
-    current: LiveProgramme?,
-    next: LiveProgramme?,
-    favourite: Boolean,
-    showGuide: Boolean,
-    modifier: Modifier,
-    onPlay: () -> Unit,
-    onFavourite: () -> Unit
+private fun LiveTvCategoryRail(
+    groups: List<String>,
+    state: LazyListState,
+    section: LiveTvSection,
+    group: String?,
+    selectedFocus: FocusRequester,
+    firstFocus: FocusRequester,
+    onSection: (LiveTvSection) -> Unit,
+    onGroup: (String) -> Unit,
+    enterChannels: () -> Boolean,
+    modifier: Modifier = Modifier
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(9.dp),
-        verticalAlignment = Alignment.CenterVertically
+    LazyColumn(
+        state = state,
+        modifier = modifier.background(GuideRail),
+        contentPadding = PaddingValues(start = 10.dp, top = 3.dp, end = 8.dp, bottom = 7.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
-        Button(
-            onClick = onPlay,
-            modifier = modifier.weight(1f).heightIn(min = 54.dp),
-            scale = ButtonDefaults.scale(focusedScale = 1f)
-        ) {
-            if (showGuide) {
-                Text(channel.name, modifier = Modifier.weight(.9f), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) { GuideCell(R.string.live_tv_now, current) }
-                Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) { GuideCell(R.string.live_tv_next, next) }
-            } else {
-                Column(Modifier.fillMaxWidth()) {
-                    Text(channel.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    current?.let {
-                        Text(
-                            stringResource(R.string.live_tv_now_line, it.title),
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
+        items(GuideSections, key = { it.name }) { item ->
+            val selected = group == null && section == item
+            val label = stringResource(item.label)
+            GuideCategoryItem(
+                if (item == LiveTvSection.FAVOURITES) "★  $label" else label,
+                selected, selectedFocus, firstFocus, enterChannels
+            ) { onSection(item) }
+        }
+        if (groups.isNotEmpty()) {
+            item("category-heading") {
+                Text(
+                    stringResource(R.string.live_tv_guide_categories),
+                    modifier = Modifier.padding(start = 8.dp, top = 9.dp, bottom = 3.dp),
+                    color = GuideMuted,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
-        val description = stringResource(
-            if (favourite) R.string.live_tv_unfavourite_channel else R.string.live_tv_favourite_channel, channel.name
-        )
-        Button(
-            onClick = onFavourite,
-            modifier = Modifier.semantics { contentDescription = description },
-            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-            scale = ButtonDefaults.scale(focusedScale = 1f)
-        ) { Text(if (favourite) "★" else "☆", style = MaterialTheme.typography.titleMedium) }
+        items(groups, key = { "group-$it" }) { item ->
+            GuideCategoryItem(item, group == item, selectedFocus, firstFocus, enterChannels) { onGroup(item) }
+        }
     }
 }
 
 @Composable
-private fun GuideCell(label: Int, programme: LiveProgramme?) {
-    Text(
-        if (programme == null) stringResource(label) else stringResource(
-            R.string.live_tv_guide_label_time, stringResource(label), formatProgrammeTime(programme.startsAt)
-        ),
-        style = MaterialTheme.typography.labelSmall,
-        maxLines = 1
-    )
-    Text(
-        programme?.title ?: stringResource(R.string.live_tv_guide_unavailable),
-        style = MaterialTheme.typography.bodySmall,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis
-    )
+private fun GuideCategoryItem(
+    label: String,
+    selected: Boolean,
+    selectedFocus: FocusRequester,
+    firstFocus: FocusRequester,
+    enterChannels: () -> Boolean,
+    onClick: () -> Unit
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.width(3.dp).height(20.dp).then(if (selected) Modifier.background(GuideAccent) else Modifier))
+        GuideButton(
+            label, onClick,
+            Modifier.weight(1f)
+                .padding(start = 4.dp)
+                .then(if (selected) Modifier.focusRequester(selectedFocus).focusRequester(firstFocus) else Modifier)
+                .onPreviewKeyEvent {
+                    it.type == KeyEventType.KeyDown && it.key == Key.DirectionRight && enterChannels()
+                },
+            startAligned = true
+        )
+    }
 }
 
-@Composable
-private fun LiveTvFilter(label: String, selected: Boolean, onClick: () -> Unit) {
-    Button(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        colors = ButtonDefaults.colors(
-            containerColor = if (selected) NuvioTheme.colors.Secondary else NuvioTheme.colors.BackgroundCard,
-            contentColor = if (selected) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextPrimary
-        ),
-        scale = ButtonDefaults.scale(focusedScale = 1f)
-    ) { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-}
 
 @Composable
 private fun LiveTvSearchDialog(initialQuery: String, onSubmit: (String) -> Unit, onDismiss: () -> Unit) {

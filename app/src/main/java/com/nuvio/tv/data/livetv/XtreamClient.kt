@@ -25,16 +25,14 @@ internal class XtreamSource private constructor(
         .digest("$server\n$username".encodeToByteArray())
         .joinToString("") { "%02x".format(it) }
 
-    fun apiUrl(action: String?, streamId: Long? = null): HttpUrl = server.newBuilder()
+    fun apiUrl(action: String?, streamId: Long? = null, limit: Int? = null): HttpUrl = server.newBuilder()
         .addPathSegment("player_api.php")
         .addQueryParameter("username", username)
         .addQueryParameter("password", password)
         .apply {
             action?.let { addQueryParameter("action", it) }
-            streamId?.let {
-                addQueryParameter("stream_id", it.toString())
-                addQueryParameter("limit", "16")
-            }
+            streamId?.let { addQueryParameter("stream_id", it.toString()) }
+            limit?.let { addQueryParameter("limit", it.toString()) }
         }
         .build()
 
@@ -68,7 +66,12 @@ internal class XtreamSource private constructor(
 }
 
 @Serializable
-internal data class LiveChannel(val id: Long, val name: String, val group: String?) {
+internal data class LiveChannel(
+    val id: Long,
+    val name: String,
+    val group: String?,
+    val logoUrl: String? = null
+) {
     val isSports: Boolean
         get() = group?.contains("sport", ignoreCase = true) == true
 }
@@ -109,17 +112,30 @@ internal class XtreamClient(
         val channels = rows(source, "get_live_streams").mapNotNull { row ->
             val id = row.field("stream_id")?.toLongOrNull()?.takeIf { it > 0 } ?: return@mapNotNull null
             val name = row.field("name") ?: return@mapNotNull null
-            LiveChannel(id, name, groups[row.field("category_id")])
+            val logo = row.field("stream_icon")?.toHttpUrlOrNull()
+                ?.takeIf { it.username.isEmpty() && it.password.isEmpty() }?.toString()
+            LiveChannel(id, name, groups[row.field("category_id")], logo)
         }.distinctBy { it.id }
         if (channels.isEmpty()) throw XtreamException(XtreamProblem.NO_CHANNELS)
         val timezone = (received["server_info"] as? JsonObject)?.field("timezone")
         return XtreamCatalog(channels, format, timezone)
     }
 
-    fun guide(source: XtreamSource, streamId: Long, timezone: String?): List<LiveProgramme> {
-        val response = read(source, "get_short_epg", streamId) as? JsonObject
-            ?: throw XtreamException(XtreamProblem.RESPONSE)
+    fun guide(source: XtreamSource, streamId: Long, timezone: String?, full: Boolean = false): List<LiveProgramme> {
         val zone = timezone?.let { runCatching { ZoneId.of(it) }.getOrNull() }
+        if (full) {
+            // The full table includes listings that have already ended. Some panels only implement short EPG.
+            val table = try {
+                read(source, "get_simple_data_table", streamId) as? JsonObject
+            } catch (failure: IOException) {
+                if (failure is XtreamException && failure.problem == XtreamProblem.SIGN_IN) throw failure
+                null
+            }
+            val programmes = table?.let { parseXtreamGuide(it, zone) }.orEmpty()
+            if (programmes.isNotEmpty()) return programmes
+        }
+        val response = read(source, "get_short_epg", streamId, limit = 16) as? JsonObject
+            ?: throw XtreamException(XtreamProblem.RESPONSE)
         return parseXtreamGuide(response, zone)
     }
 
@@ -128,8 +144,8 @@ internal class XtreamClient(
         return array.filterIsInstance<JsonObject>()
     }
 
-    private fun read(source: XtreamSource, action: String?, streamId: Long? = null): JsonElement {
-        val request = Request.Builder().url(source.apiUrl(action, streamId)).build()
+    private fun read(source: XtreamSource, action: String?, streamId: Long? = null, limit: Int? = null): JsonElement {
+        val request = Request.Builder().url(source.apiUrl(action, streamId, limit)).build()
         val call = http.newCall(request)
         if (streamId != null) call.timeout().timeout(8, TimeUnit.SECONDS)
         call.execute().use { response ->

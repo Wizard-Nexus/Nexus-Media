@@ -65,6 +65,8 @@ internal class LiveTvViewModel @Inject constructor(
     private val profiles: ProfileManager,
     private val storage: LiveTvStorage
 ) : ViewModel() {
+    private data class GuideCheck(val checkedAt: Long, val full: Boolean)
+
     private class Profile(
         val id: Int,
         val resetVersion: Int,
@@ -75,7 +77,8 @@ internal class LiveTvViewModel @Inject constructor(
         var ready = false
         var tuningOrder: List<Long>? = null
         val loadingGuide = mutableSetOf<Long>()
-        val guideCheckedAt = mutableMapOf<Long, Long>()
+        val guideCheckedAt = mutableMapOf<Long, GuideCheck>()
+        val pendingFullGuide = mutableSetOf<Long>()
     }
 
     private val client = XtreamClient()
@@ -179,6 +182,7 @@ internal class LiveTvViewModel @Inject constructor(
             active.refreshedAt = null
             active.guideCheckedAt.clear()
             active.loadingGuide.clear()
+            active.pendingFullGuide.clear()
             withContext(Dispatchers.IO) { storage.clearCatalog(active.id) }
             _state.value = LiveTvState(active.id, player = _state.value.player, loading = false)
         }
@@ -230,24 +234,27 @@ internal class LiveTvViewModel @Inject constructor(
         _state.update { it.copy(history = changed) }
     }
 
-    fun requestGuide(ids: List<Long>) {
+    fun requestGuide(ids: List<Long>, full: Boolean = false) {
         val active = currentProfile() ?: return
         val source = active.source ?: return
         val timezone = _state.value.catalog?.timezone
         val now = SystemClock.elapsedRealtime()
-        val pending = ids.filter { id ->
-            val checkedAt = active.guideCheckedAt[id]
-            (checkedAt == null || now - checkedAt >= GUIDE_TTL_MS) && active.loadingGuide.add(id)
-        }
-        pending.forEach { id ->
+        ids.forEach { id ->
+            val check = active.guideCheckedAt[id]
+            if (check != null && now - check.checkedAt < GUIDE_TTL_MS && (!full || check.full)) return@forEach
+            val fullSchedule = full || check?.full == true
+            if (!active.loadingGuide.add(id)) {
+                if (fullSchedule) active.pendingFullGuide.add(id)
+                return@forEach
+            }
             active.scope.launch {
                 try {
                     val listings = guideRequests.withPermit {
                         if (active.source !== source) return@withPermit null
-                        providerRequest { client.guide(source, id, timezone) }.getOrNull()
+                        providerRequest { client.guide(source, id, timezone, fullSchedule) }.getOrNull()
                     }
                     if (active.source !== source) return@launch
-                    active.guideCheckedAt[id] = SystemClock.elapsedRealtime()
+                    active.guideCheckedAt[id] = GuideCheck(SystemClock.elapsedRealtime(), fullSchedule)
                     if (listings != null) {
                         val guide = _state.value.guide
                         val evicted = guide.keys.firstOrNull().takeIf { id !in guide && guide.size >= 256 }
@@ -258,7 +265,10 @@ internal class LiveTvViewModel @Inject constructor(
                         _state.update { it.copy(guide = entries + (id to listings)) }
                     }
                 } finally {
-                    if (active.source === source) active.loadingGuide.remove(id)
+                    if (active.source === source) {
+                        active.loadingGuide.remove(id)
+                        if (active.pendingFullGuide.remove(id) && !fullSchedule && currentProfile() === active) requestGuide(listOf(id), full = true)
+                    }
                 }
             }
         }
@@ -363,7 +373,10 @@ internal class LiveTvViewModel @Inject constructor(
             runCatching { storage.writeCatalog(active.id, source, catalog) }
             if (sameAccount) null else storage.readHistory(active.id, source)
         }
-        if (oldSource !== source) active.loadingGuide.clear()
+        if (oldSource !== source) {
+            active.loadingGuide.clear()
+            active.pendingFullGuide.clear()
+        }
         if (!sameAccount) {
             active.guideCheckedAt.clear()
             active.tuningOrder = null
