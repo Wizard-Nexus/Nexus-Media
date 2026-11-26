@@ -119,7 +119,8 @@ fun GridHomeContent(
     catalogSeeAllLabel: String? = null,
     onSaveGridFocusState: (Int, Int, String?) -> Unit,
     onFocusedRowKeyChanged: (String?) -> Unit = {},
-    scrollToTopTrigger: Int = 0
+    scrollToTopTrigger: Int = 0,
+    liveTvShortcuts: (@Composable () -> Unit)? = null
 ) {
     val gridState = rememberLazyGridState(
         initialFirstVisibleItemIndex = gridFocusState.verticalScrollIndex,
@@ -592,6 +593,12 @@ fun GridHomeContent(
                         posterCardWidth = posterCardStyle.width,
                         posterCardHeight = posterCardStyle.height
                     )
+                }
+            }
+
+            if (liveTvShortcuts != null) {
+                item(key = "live_tv_shortcuts", span = { GridItemSpan(maxLineSpan) }) {
+                    liveTvShortcuts()
                 }
             }
 

@@ -73,6 +73,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.rounded.Groups
@@ -180,7 +181,13 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.media3.exoplayer.ExoPlayer
 import com.nuvio.tv.libass.media.widget.AssSubtitleSurfaceView
 import kotlin.math.abs
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nuvio.tv.data.livetv.LiveChannel
+import com.nuvio.tv.ui.screens.livetv.LiveTvChannelPicker
+import com.nuvio.tv.ui.screens.livetv.LiveTvViewModel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 private const val PLAYER_CONTROLS_FADE_DURATION_MS = 200
@@ -206,17 +213,48 @@ internal fun playerBackOpensCurrentEpisodeStreams(
     autoPlayEnabled: Boolean
 ): Boolean = episodeChangedInPlace && !autoPlayEnabled
 
+internal data class LiveTvPlayerControls(
+    val viewModel: LiveTvViewModel,
+    val currentId: Long,
+    val profileId: Int,
+    val onTune: (LiveChannel, releasePrevious: () -> Unit) -> Boolean
+)
+
 @Composable
-fun PlayerScreen(
+internal fun PlayerScreen(
     viewModel: PlayerViewModel = hiltViewModel(),
     onBackPress: (currentVideoId: String?, currentSeason: Int?, currentEpisode: Int?, autoPlayEnabled: Boolean, playbackCompleted: Boolean) -> Unit,
     onPlaybackErrorBack: () -> Unit = { onBackPress(null, null, null, false, false) },
     onPlaybackEnded: ((nextVideoId: String?, nextSeason: Int?, nextEpisode: Int?, exitReason: PlayerExitReason?) -> Unit)? = null,
     onPlayRecommendation: (PostPlayRecommendation, manualSelection: Boolean) -> Unit = { _, _ -> },
     onOpenRecommendationDetails: (PostPlayRecommendation) -> Unit = {},
-    onOpenPartyMedia: (PartyMedia) -> Unit = {}
+    onOpenPartyMedia: (PartyMedia) -> Unit = {},
+    liveTvControls: LiveTvPlayerControls? = null
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val liveState = liveTvControls?.viewModel?.state?.collectAsStateWithLifecycle()?.value
+    val channels = liveState?.catalog?.channels.orEmpty()
+    val channelIndex = remember(channels) { channels.associateBy { it.id } }
+    val liveControlsAvailable = liveTvControls != null && liveState?.profileId == liveTvControls.profileId &&
+        liveTvControls.currentId in channelIndex
+    val previousChannel = if (liveControlsAvailable && liveTvControls != null) {
+        liveState?.history?.previousChannel(liveTvControls.currentId, channelIndex::containsKey)?.let(channelIndex::get)
+    } else null
+    var showChannelPicker by remember { mutableStateOf(false) }
+    fun switchChannel(channel: LiveChannel) {
+        if (liveTvControls?.onTune?.invoke(channel, viewModel::stopAndRelease) == true) showChannelPicker = false
+    }
+    if (liveTvControls != null) {
+        LaunchedEffect(viewModel, liveTvControls.profileId, liveTvControls.currentId) {
+            viewModel.livePlaybackStarted.filterNotNull().first()
+            liveTvControls.viewModel.channelRendered(liveTvControls.profileId, liveTvControls.currentId)
+        }
+        if (showChannelPicker && liveControlsAvailable) {
+            LiveTvChannelPicker(liveTvControls.viewModel, liveTvControls.currentId, ::switchChannel) {
+                showChannelPicker = false
+            }
+        }
+    }
     val playerBadges = rememberPlayerBadges(viewModel, uiState)
     val partyState by viewModel.party.state.collectAsState()
     val partyPlayback by viewModel.party.playback.collectAsState()
@@ -1672,6 +1710,10 @@ fun PlayerScreen(
                 onShowChaptersPanel = { viewModel.onEvent(PlayerEvent.OnShowChaptersPanel) },
                 onShowEpisodesPanel = { viewModel.onEvent(PlayerEvent.OnShowEpisodesPanel) },
                 onShowSourcesPanel = { viewModel.onEvent(PlayerEvent.OnShowSourcesPanel) },
+                onShowChannelPicker = if (liveControlsAvailable) {
+                    { showChannelPicker = true }
+                } else null,
+                onPreviousChannel = previousChannel?.let { channel -> { switchChannel(channel) } },
                 onShowPartyPanel = if (partyAvailable && viewModel.canUseParty) {
                     { viewModel.onEvent(PlayerEvent.OnShowPartyPanel) }
                 } else {
@@ -2842,7 +2884,9 @@ private fun PlayerControlsOverlay(
     skipButtonVisible: Boolean = false,
     subtitleReportingActive: Boolean = true,
     onSubtitleClearanceChanged: (Float) -> Unit = {},
-    onSubtitleTitleBoundsChanged: (Float, Float) -> Unit = { _, _ -> }
+    onSubtitleTitleBoundsChanged: (Float, Float) -> Unit = { _, _ -> },
+    onShowChannelPicker: (() -> Unit)? = null,
+    onPreviousChannel: (() -> Unit)? = null
 ) {
     val density = LocalDensity.current
     val clearanceOffsetPx = with(density) { (NuvioTheme.spacing.xl - SUBTITLE_CONTROLS_GAP).toPx() }
@@ -3104,15 +3148,35 @@ private fun PlayerControlsOverlay(
                         )
                     }
 
-                    ControlButton(
-                        icon = Icons.Default.SwapHoriz,
-                        iconPainter = customSourcePainter,
-                        contentDescription = stringResource(R.string.cd_sources),
-                        onClick = onShowSourcesPanel,
-                        upFocusRequester = progressUpTarget,
-                        onDownKey = onHideControls,
-                        onFocused = onResetHideTimer
-                    )
+                    if (onShowChannelPicker != null) {
+                        ControlButton(
+                            icon = Icons.AutoMirrored.Filled.List,
+                            contentDescription = stringResource(R.string.live_tv_channel_picker),
+                            onClick = onShowChannelPicker,
+                            upFocusRequester = progressUpTarget,
+                            onDownKey = onHideControls,
+                            onFocused = onResetHideTimer
+                        )
+                        ControlButton(
+                            icon = Icons.Default.SkipPrevious,
+                            contentDescription = stringResource(R.string.live_tv_previous_channel),
+                            onClick = { onPreviousChannel?.invoke() },
+                            enabled = onPreviousChannel != null,
+                            upFocusRequester = progressUpTarget,
+                            onDownKey = onHideControls,
+                            onFocused = onResetHideTimer
+                        )
+                    } else {
+                        ControlButton(
+                            icon = Icons.Default.SwapHoriz,
+                            iconPainter = customSourcePainter,
+                            contentDescription = stringResource(R.string.cd_sources),
+                            onClick = onShowSourcesPanel,
+                            upFocusRequester = progressUpTarget,
+                            onDownKey = onHideControls,
+                            onFocused = onResetHideTimer
+                        )
+                    }
 
                     // In the main row: a disc's extras are easy to miss behind the more-actions button.
                     if (uiState.discTitles.size > 1 && uiState.internalPlayerEngine != InternalPlayerEngine.MVP_PLAYER) {

@@ -1,5 +1,6 @@
 package com.nuvio.tv.data.livetv
 
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -11,6 +12,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
+import java.security.MessageDigest
+import java.time.ZoneId
 import java.util.concurrent.TimeUnit
 
 internal class XtreamSource private constructor(
@@ -18,11 +21,21 @@ internal class XtreamSource private constructor(
     val username: String,
     val password: String
 ) {
-    fun apiUrl(action: String?): HttpUrl = server.newBuilder()
+    val cacheKey: String = MessageDigest.getInstance("SHA-256")
+        .digest("$server\n$username".encodeToByteArray())
+        .joinToString("") { "%02x".format(it) }
+
+    fun apiUrl(action: String?, streamId: Long? = null): HttpUrl = server.newBuilder()
         .addPathSegment("player_api.php")
         .addQueryParameter("username", username)
         .addQueryParameter("password", password)
-        .apply { action?.let { addQueryParameter("action", it) } }
+        .apply {
+            action?.let { addQueryParameter("action", it) }
+            streamId?.let {
+                addQueryParameter("stream_id", it.toString())
+                addQueryParameter("limit", "16")
+            }
+        }
         .build()
 
     fun streamUrl(streamId: Long, format: String): HttpUrl = server.newBuilder()
@@ -54,12 +67,18 @@ internal class XtreamSource private constructor(
     }
 }
 
+@Serializable
 internal data class LiveChannel(val id: Long, val name: String, val group: String?) {
     val isSports: Boolean
         get() = group?.contains("sport", ignoreCase = true) == true
 }
 
-internal data class XtreamCatalog(val channels: List<LiveChannel>, val format: String)
+@Serializable
+internal data class XtreamCatalog(
+    val channels: List<LiveChannel>,
+    val format: String,
+    val timezone: String? = null
+)
 
 internal enum class XtreamProblem { SIGN_IN, NO_CHANNELS, RESPONSE }
 internal class XtreamException(val problem: XtreamProblem) : IOException()
@@ -91,9 +110,17 @@ internal class XtreamClient(
             val id = row.field("stream_id")?.toLongOrNull()?.takeIf { it > 0 } ?: return@mapNotNull null
             val name = row.field("name") ?: return@mapNotNull null
             LiveChannel(id, name, groups[row.field("category_id")])
-        }.distinct()
+        }.distinctBy { it.id }
         if (channels.isEmpty()) throw XtreamException(XtreamProblem.NO_CHANNELS)
-        return XtreamCatalog(channels, format)
+        val timezone = (received["server_info"] as? JsonObject)?.field("timezone")
+        return XtreamCatalog(channels, format, timezone)
+    }
+
+    fun guide(source: XtreamSource, streamId: Long, timezone: String?): List<LiveProgramme> {
+        val response = read(source, "get_short_epg", streamId) as? JsonObject
+            ?: throw XtreamException(XtreamProblem.RESPONSE)
+        val zone = timezone?.let { runCatching { ZoneId.of(it) }.getOrNull() }
+        return parseXtreamGuide(response, zone)
     }
 
     private fun rows(source: XtreamSource, action: String): List<JsonObject> {
@@ -101,9 +128,11 @@ internal class XtreamClient(
         return array.filterIsInstance<JsonObject>()
     }
 
-    private fun read(source: XtreamSource, action: String?): JsonElement {
-        val request = Request.Builder().url(source.apiUrl(action)).build()
-        http.newCall(request).execute().use { response ->
+    private fun read(source: XtreamSource, action: String?, streamId: Long? = null): JsonElement {
+        val request = Request.Builder().url(source.apiUrl(action, streamId)).build()
+        val call = http.newCall(request)
+        if (streamId != null) call.timeout().timeout(8, TimeUnit.SECONDS)
+        call.execute().use { response ->
             if (response.code in listOf(401, 403)) throw XtreamException(XtreamProblem.SIGN_IN)
             if (!response.isSuccessful) throw XtreamException(XtreamProblem.RESPONSE)
             val body = response.body?.source() ?: throw XtreamException(XtreamProblem.RESPONSE)

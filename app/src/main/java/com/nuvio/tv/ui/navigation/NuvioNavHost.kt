@@ -24,6 +24,7 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import android.os.SystemClock
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -47,7 +48,11 @@ import com.nuvio.tv.ui.screens.home.HomeScreen
 import com.nuvio.tv.ui.screens.addon.AddonManagerScreen
 import com.nuvio.tv.ui.screens.addon.CatalogOrderScreen
 import com.nuvio.tv.ui.screens.library.LibraryScreen
+import com.nuvio.tv.data.livetv.LiveChannel
+import com.nuvio.tv.ui.screens.livetv.LiveTvHomeShortcuts
 import com.nuvio.tv.ui.screens.livetv.LiveTvScreen
+import com.nuvio.tv.ui.screens.livetv.rememberLiveTvHomeShortcutsVisible
+import com.nuvio.tv.ui.screens.player.LiveTvPlayerControls
 import com.nuvio.tv.ui.screens.livetv.LiveTvViewModel
 import com.nuvio.tv.ui.screens.player.PlayerExitReason
 import com.nuvio.tv.ui.screens.player.PlayerScreen
@@ -82,6 +87,7 @@ fun NuvioNavHost(
     hideBuiltInHeaders: Boolean = false,
     discoverIsRoot: Boolean = false
 ) {
+    val liveTv: LiveTvViewModel = androidx.hilt.navigation.compose.hiltViewModel()
     PlaybackAvailabilityProvider {
         // The NavController keeps its back stack ViewModels in the store of the owner it is
         // composed under, so use the session store when MainActivity provides one.
@@ -92,7 +98,7 @@ fun NuvioNavHost(
                 LocalBackgroundTrailerController.current?.let { controller ->
                     BackgroundTrailerLayer(controller = controller)
                 }
-                PlaybackNavHost(navController, startDestination, hideBuiltInHeaders, discoverIsRoot)
+                PlaybackNavHost(navController, startDestination, hideBuiltInHeaders, discoverIsRoot, liveTv)
             }
         }
     }
@@ -118,8 +124,35 @@ private fun PlaybackNavHost(
     navController: NavHostController,
     startDestination: String,
     hideBuiltInHeaders: Boolean,
-    discoverIsRoot: Boolean
+    discoverIsRoot: Boolean,
+    liveTv: LiveTvViewModel
 ) {
+    fun playLiveChannel(
+        channel: LiveChannel,
+        fromRoute: String,
+        releasePrevious: (() -> Unit)? = null
+    ): Boolean {
+        val origin = navController.currentBackStackEntry ?: return false
+        if (origin.destination.route != fromRoute) return false
+        val clickedAt = SystemClock.elapsedRealtime()
+        val url = liveTv.tune(channel) ?: return false
+        releasePrevious?.invoke()
+        navController.navigate(
+            Screen.Player.createRoute(
+                streamUrl = url,
+                title = channel.name,
+                contentType = "channel",
+                contentName = channel.name,
+                launchStartedAtMs = clickedAt,
+                profileId = liveTv.state.value.profileId,
+                liveChannelId = channel.id
+            )
+        ) {
+            if (releasePrevious != null) popUpTo(origin.destination.id) { inclusive = true }
+        }
+        return true
+    }
+
     val playbackAvailability = LocalPlaybackAvailability.current
     val context = LocalContext.current
     val backgroundTrailerController = LocalBackgroundTrailerController.current
@@ -161,7 +194,10 @@ private fun PlaybackNavHost(
     NavHost(
         navController = navController,
         startDestination = startDestination,
-        enterTransition = {
+        enterTransition = enterTransition@{
+            if (initialState.arguments?.getString("liveChannelId")?.toLongOrNull() != null &&
+                targetState.arguments?.getString("liveChannelId")?.toLongOrNull() != null
+            ) return@enterTransition EnterTransition.None
             val from = initialState.destination.route.orEmpty()
             val to = targetState.destination.route.orEmpty()
             val isAutoPlayNav = targetState.arguments
@@ -173,7 +209,10 @@ private fun PlaybackNavHost(
                 fadeIn(animationSpec = tween(NuvioMotion.tokens.durations.medium))
             }
         },
-        exitTransition = {
+        exitTransition = exitTransition@{
+            if (initialState.arguments?.getString("liveChannelId")?.toLongOrNull() != null &&
+                targetState.arguments?.getString("liveChannelId")?.toLongOrNull() != null
+            ) return@exitTransition ExitTransition.None
             val from = initialState.destination.route.orEmpty()
             val to = targetState.destination.route.orEmpty()
             val isAutoPlayNav = targetState.arguments
@@ -289,7 +328,11 @@ private fun PlaybackNavHost(
                 }
             }
 
+            val liveShortcutsVisible = rememberLiveTvHomeShortcutsVisible(liveTv)
             HomeScreen(
+                liveTvShortcuts = if (liveShortcutsVisible) {
+                    { LiveTvHomeShortcuts(liveTv) { channel -> playLiveChannel(channel, Screen.Home.route) } }
+                } else null,
                 onNavigateToDetail = { itemId, itemType, addonBaseUrl ->
                     val heroBackdrop = HeroBackdropState.consumeAndClear()
                     navController.navigate(
@@ -892,6 +935,11 @@ private fun PlaybackNavHost(
                     nullable = true
                     defaultValue = null
                 },
+                navArgument("liveChannelId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
                 navArgument("launchStartedAtMs") {
                     type = NavType.StringType
                     nullable = true
@@ -957,7 +1005,20 @@ private fun PlaybackNavHost(
                 }
             }
 
+            val liveChannelId = backStackEntry.arguments?.getString("liveChannelId")?.toLongOrNull()
+            val liveProfileId = backStackEntry.arguments?.getString("profileId")?.toIntOrNull()
             PlayerScreen(
+                liveTvControls = if (liveChannelId != null && liveProfileId != null) {
+                    LiveTvPlayerControls(
+                        viewModel = liveTv,
+                        currentId = liveChannelId,
+                        profileId = liveProfileId,
+                        onTune = { channel, release ->
+                            if (navController.currentBackStackEntry != backStackEntry) false
+                            else playLiveChannel(channel, Screen.Player.route, release)
+                        }
+                    )
+                } else null,
                 onBackPress = { currentVideoId, currentSeason, currentEpisode, autoPlayEnabled, playbackCompleted ->
                     val args = backStackEntry.arguments
                     val initialSeason = args?.getString("season")?.toIntOrNull()
@@ -1282,21 +1343,8 @@ private fun PlaybackNavHost(
             )
         }
 
-        rootComposable(Screen.LiveTv.route) { entry ->
-            val viewModel: LiveTvViewModel = androidx.hilt.navigation.compose.hiltViewModel(entry)
-            LiveTvScreen(viewModel) { channel ->
-                val url = viewModel.streamUrl(channel) ?: return@LiveTvScreen
-                if (navController.currentDestination?.route != Screen.LiveTv.route) return@LiveTvScreen
-                navController.navigate(
-                    Screen.Player.createRoute(
-                        streamUrl = url,
-                        title = channel.name,
-                        contentType = "channel",
-                        contentName = channel.name,
-                        profileId = viewModel.profileId
-                    )
-                )
-            }
+        rootComposable(Screen.LiveTv.route) {
+            LiveTvScreen(liveTv) { channel -> playLiveChannel(channel, Screen.LiveTv.route) }
         }
 
         rootComposable(Screen.Library.route) {

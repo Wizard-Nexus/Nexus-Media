@@ -5,7 +5,8 @@ param(
     [Parameter(Mandatory)][string]$VersionName,
     [Parameter(Mandatory)][int]$VersionCode,
     [Parameter(Mandatory)][string]$StableApk,
-    [string]$BetaApk
+    [string]$BetaApk,
+    [switch]$SmallApks
 )
 
 $ErrorActionPreference = 'Stop'
@@ -40,6 +41,16 @@ function Confirm-ApkSignature([string]$Apk) {
 Get-ChildItem Env: | Where-Object { $_.Name -match '^NUVIO_RELEASE_|^GH_TOKEN$|^GITHUB_TOKEN$|^SENTRY_AUTH_TOKEN$' } | ForEach-Object { Remove-Item -LiteralPath ('Env:' + $_.Name) }
 
 $init = Join-Path $PSScriptRoot 'nexus-release.init.gradle'
+$sizeArguments = @()
+if ($SmallApks) {
+    $ndk = Join-Path $state 'toolchains/android-ndk-r29'
+    $strip = Join-Path $ndk 'toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-strip.exe'
+    if (!(Test-Path -LiteralPath $strip -PathType Leaf)) {
+        throw 'Install the pinned Android NDK r29 in the release toolchains folder before building smaller APKs.'
+    }
+    $sizeArguments += "-PnexusReleaseNdkPath=$ndk"
+    $sizeArguments += @('--tests', 'com.nuvio.tv.data.livetv.*', '--tests', 'com.nuvio.tv.core.server.XtreamPhoneSetupServerTest')
+}
 Push-Location -LiteralPath $Source
 $originalPath = $env:Path
 # AGP adds PATH entries to java.library.path for JVM unit tests.
@@ -50,14 +61,15 @@ $env:Path = @(
     (Join-Path $env:ProgramFiles 'Git/cmd')
 ) -join ';'
 try {
-    Invoke-Checked (Join-Path $Source 'gradlew.bat') @(
-        '--init-script', $init, '--no-daemon', '--console=plain', '--configure-on-demand', '--max-workers=1',
+    $gradleArguments = @(
+        '--init-script', $init, '--daemon', '--build-cache', '--console=plain', '--configure-on-demand', '--max-workers=1',
         '-PnexusUniversalApk=true', '-Pkotlin.compiler.execution.strategy=in-process',
         '-Pandroid.builder.sdkDownload=false',
         '-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=768m -XX:ActiveProcessorCount=8 -Dfile.encoding=UTF-8',
-        ':app:assembleFullRelease', ':app:testFullReleaseUnitTest',
+        ':app:assembleFullRelease', ':app:testFullReleaseUnitTest', '--rerun',
         '--tests', 'com.nuvio.tv.data.livetv.XtreamClientTest', '--tests', 'com.nuvio.tv.updater.*'
-    )
+    ) + $sizeArguments
+    Invoke-Checked (Join-Path $Source 'gradlew.bat') $gradleArguments
 } finally {
     $env:Path = $originalPath
     Pop-Location
@@ -72,27 +84,73 @@ if (@($metadata.elements).Count -ne 1 -or $metadata.applicationId -ne $package -
     throw 'Gradle did not produce the expected universal unsigned Nexus Media APK.'
 }
 
-$finalApk = Join-Path $Output 'Nexus-Media.apk'
+$unsignedApk = Join-Path $apkDir $entry.outputFile
+$universalName = 'Nexus-Media.apk'
+$intelName = 'Nexus-Media-x86-x86_64.apk'
+$variants = [ordered]@{
+    $universalName = @('arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64')
+}
+if ($SmallApks) {
+    $variants['Nexus-Media-arm64-v8a.apk'] = @('arm64-v8a')
+    $variants['Nexus-Media-armeabi-v7a.apk'] = @('armeabi-v7a')
+    # The existing TV updater matches ABI names by substring. One Intel APK
+    # keeps x86 and x86_64 devices on their native libraries in any asset order.
+    $variants[$intelName] = @('x86', 'x86_64')
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($unsignedApk)
+    try {
+        $libraries = @($archive.Entries.FullName | Where-Object { $_ -match '^lib/[^/]+/.+' })
+    } finally {
+        $archive.Dispose()
+    }
+    $symbols = Join-Path $Source 'app/build/outputs/native-debug-symbols/fullRelease/native-debug-symbols.zip'
+    Copy-Item -LiteralPath $symbols -Destination (Join-Path $Output 'native-debug-symbols.zip') -Force
+}
+
+$finalApk = Join-Path $Output $universalName
 $alignedApk = Join-Path $Output 'nexus-aligned.apk'
-Invoke-Checked "$tools/zipalign.exe" @('-f', '-P', '16', '4', (Join-Path $apkDir $entry.outputFile), $alignedApk)
+$filteredApk = Join-Path $Output 'nexus-filtered.apk'
+Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1')
 $secret = Get-Content -LiteralPath (Join-Path $Repo '.nexus-signing/password.dpapi') -Raw | ConvertTo-SecureString
 try {
     $env:NEXUS_LOCAL_SIGNING_PASSWORD = [PSCredential]::new('nexus-media', $secret).GetNetworkCredential().Password
-    Invoke-Checked "$tools/apksigner.bat" @(
-        'sign', '--ks', (Join-Path $Repo '.nexus-signing/nexus-media.p12'),
-        '--ks-key-alias', 'nexus-media', '--ks-pass', 'env:NEXUS_LOCAL_SIGNING_PASSWORD',
-        '--key-pass', 'env:NEXUS_LOCAL_SIGNING_PASSWORD', '--out', $finalApk, $alignedApk
-    )
+    foreach ($name in $variants.Keys) {
+        $sourceApk = $unsignedApk
+        if ($name -ne $universalName) {
+            Copy-Item -LiteralPath $unsignedApk -Destination $filteredApk -Force
+            $remove = @($libraries | Where-Object { $variants[$name] -notcontains $_.Split('/')[1] })
+            Invoke-Checked "$tools/aapt.exe" (@('remove', $filteredApk) + $remove) | Out-Null
+            $sourceApk = $filteredApk
+        }
+        Invoke-Checked "$tools/zipalign.exe" @('-f', '-P', '16', '4', $sourceApk, $alignedApk)
+        $signedApk = Join-Path $Output $name
+        Invoke-Checked "$tools/apksigner.bat" @(
+            'sign', '--ks', (Join-Path $Repo '.nexus-signing/nexus-media.p12'),
+            '--ks-key-alias', 'nexus-media', '--ks-pass', 'env:NEXUS_LOCAL_SIGNING_PASSWORD',
+            '--key-pass', 'env:NEXUS_LOCAL_SIGNING_PASSWORD', '--out', $signedApk, $alignedApk
+        )
+    }
 } finally {
     Remove-Item Env:NEXUS_LOCAL_SIGNING_PASSWORD -ErrorAction SilentlyContinue
     $secret.Dispose()
+    Remove-Item -LiteralPath $alignedApk, $filteredApk -ErrorAction SilentlyContinue
 }
-Remove-Item -LiteralPath $alignedApk
-Confirm-ApkSignature $finalApk
-$badging = Invoke-Checked "$tools/aapt.exe" @('dump', 'badging', $finalApk)
-if (!($badging -match "^package: name='$package' versionCode='$VersionCode' versionName='$([regex]::Escape($VersionName))'") -or
-    !($badging -match "^native-code: 'arm64-v8a' 'armeabi-v7a' 'x86' 'x86_64'$")) {
-    throw 'The signed APK does not match the expected version and TV architectures.'
+
+foreach ($name in $variants.Keys) {
+    $signedApk = Join-Path $Output $name
+    Confirm-ApkSignature $signedApk
+    Invoke-Checked "$tools/zipalign.exe" @('-c', '-P', '16', '4', $signedApk)
+    $badging = Invoke-Checked "$tools/aapt.exe" @('dump', 'badging', $signedApk)
+    $nativeCode = 'native-code: ' + (($variants[$name] | ForEach-Object { "'$_'" }) -join ' ')
+    if (!($badging -match "^package: name='$package' versionCode='$VersionCode' versionName='$([regex]::Escape($VersionName))'") -or
+        $badging -notcontains $nativeCode) {
+        throw "$name does not match the expected version and TV architectures."
+    }
+    $length = (Get-Item -LiteralPath $signedApk).Length
+    if ($name -ne $universalName -and $length -ge (Get-Item -LiteralPath $finalApk).Length) {
+        throw "$name must be smaller than the universal APK."
+    }
+    Write-Output "Verified $name ($length bytes)."
 }
 
 $adb = Join-Path $sdk 'platform-tools/adb.exe'
@@ -162,7 +220,11 @@ try {
         $installedAt = $before | Where-Object { $_ -match '^\s+firstInstallTime=' } | Select-Object -First 1
         if (!$id -or !$installedAt) { throw 'Could not read the original Android app installation.' }
 
-        Invoke-Checked $adb @('-s', $serial, 'install', '-r', $finalApk)
+        $upgradeApk = $finalApk
+        if ($SmallApks -and $baseline -eq $BetaApk) {
+            $upgradeApk = Join-Path $Output $intelName
+        }
+        Invoke-Checked $adb @('-s', $serial, 'install', '-r', $upgradeApk)
         Confirm-AppLaunch
         $after = Get-InstalledPackage
         if ($after -notcontains $id -or $after -notcontains $installedAt -or
@@ -170,7 +232,7 @@ try {
             !($after -match "^\s+versionName=$([regex]::Escape($VersionName))$")) {
             throw 'The APK did not upgrade the existing Android TV installation.'
         }
-        Write-Output "TV upgrade passed from $((Split-Path (Split-Path $baseline -Parent) -Leaf)) to $VersionName."
+        Write-Output "TV upgrade passed from $((Split-Path (Split-Path $baseline -Parent) -Leaf)) to $VersionName using $((Split-Path $upgradeApk -Leaf))."
     }
 } finally {
     if (((& $adb devices) -match "^$serial\s") -and ((& $adb -s $serial emu avd name | Select-Object -First 1) -eq $avd)) {

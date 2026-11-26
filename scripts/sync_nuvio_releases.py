@@ -18,6 +18,12 @@ from release_beta import parse_versions, updated_build_file
 UPSTREAM = "NuvioMedia/NuvioTV"
 FORK = "Wizard-Nexus/Nexus-Media"
 ASSET = "Nexus-Media.apk"
+INTEL_ASSET = "Nexus-Media-x86-x86_64.apk"
+DEVICE_ASSETS = (
+    "Nexus-Media-arm64-v8a.apk",
+    "Nexus-Media-armeabi-v7a.apk",
+    INTEL_ASSET,
+)
 BUILD_FILE = Path("app/build.gradle.kts")
 SCRIPTS = Path(__file__).resolve().parent
 PROGRAM_FILES = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
@@ -178,17 +184,60 @@ def prepare_candidate(repo, workspace, base, source, channel, tag, version):
     return git(workspace, "rev-parse", "HEAD").stdout.strip()
 
 
-def download_baseline(repo, state, release):
+def build_worktrees(state):
+    config = state / "build-worktrees.json"
+    try:
+        names = json.loads(config.read_text(encoding="utf-8")) if config.exists() else {}
+    except (OSError, ValueError) as error:
+        raise SyncError(f"Could not read the build checkout settings in {config}.") from error
+    if not isinstance(names, dict):
+        raise SyncError(f"Build checkout settings in {config} must be a JSON object.")
+
+    worktrees = {}
+    for channel in ("stable", "beta"):
+        name = names.get(channel, f"build-{channel}")
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?", name):
+            raise SyncError(f"The {channel} build checkout must be a directory name in {state}.")
+        workspace = (state / name).resolve()
+        if workspace.parent != state.resolve():
+            raise SyncError(f"The {channel} build checkout must be inside {state}.")
+        worktrees[channel] = workspace
+    if worktrees["stable"] == worktrees["beta"]:
+        raise SyncError("Stable and Beta need separate build checkouts.")
+    return worktrees
+
+
+def prepare_build_checkout(repo, workspace, commit):
+    if not workspace.exists():
+        git(repo, "worktree", "add", "--quiet", "--detach", workspace, commit)
+        return
+
+    root, common = git(
+        workspace, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"
+    ).stdout.splitlines()
+    repo_common = git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()
+    if Path(root).resolve() != workspace or Path(common).resolve() != Path(repo_common).resolve():
+        raise SyncError(f"The build checkout in {workspace} does not belong to {repo}.")
+    if (git(workspace, "symbolic-ref", "-q", "HEAD", check=False).returncode != 1
+            or git(workspace, "status", "--porcelain").stdout.strip()):
+        raise SyncError(f"The release build checkout must be detached and clean: {workspace}.")
+    if git(workspace, "rev-parse", "HEAD").stdout.strip() != commit:
+        git(workspace, "switch", "--detach", "--quiet", "--no-overwrite-ignore", commit)
+
+
+def download_baseline(repo, state, release, *, asset_name=ASSET):
     tag = release["tag_name"]
-    assets = [asset for asset in release["assets"] if asset["name"] == ASSET]
+    if asset_name not in (ASSET, *DEVICE_ASSETS):
+        raise SyncError(f"Unexpected baseline APK name: {asset_name!r}.")
+    assets = [asset for asset in release["assets"] if asset["name"] == asset_name]
     if len(assets) != 1 or not assets[0]["digest"]:
-        raise SyncError(f"Could not identify the signed Nexus APK for {tag}.")
+        raise SyncError(f"Could not identify the signed Nexus APK {asset_name} for {tag}.")
     folder = state / "baselines" / tag
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / ASSET
+    path = folder / asset_name
     if not path.is_file():
         run(GH, "release", "download", tag, "--repo", FORK,
-            "--pattern", ASSET, "--dir", folder, cwd=repo)
+            "--pattern", asset_name, "--dir", folder, cwd=repo)
     if digest(path) != assets[0]["digest"]:
         # A failed download can be retried on the next run.
         path.unlink()
@@ -215,13 +264,25 @@ def current_publications(repo):
     return stable, latest_beta(releases), releases
 
 
+def expected_asset_digests(plan):
+    devices = plan.get("device_digests")
+    if devices is None:
+        return {ASSET: plan["digest"]}
+    if not isinstance(devices, dict) or set(devices) != set(DEVICE_ASSETS):
+        raise SyncError("Device APKs must match the complete release asset set.")
+    return {ASSET: plan["digest"], **devices}
+
+
 def finish_release(repo, pending):
     plan = json.loads(pending.read_text(encoding="utf-8"))
     tag = plan["tag"]
     channel = plan["channel"]
-    apk = Path(plan["apk"])
-    if not apk.is_file() or digest(apk) != plan["digest"]:
-        raise SyncError(f"Verified APK for {tag} is missing or has changed.")
+    output = Path(plan["apk"]).parent
+    expected = expected_asset_digests(plan)
+    apks = {name: output / name for name in expected}
+    for name, apk in apks.items():
+        if not apk.is_file() or digest(apk) != expected[name]:
+            raise SyncError(f"Verified APK {name} for {tag} is missing or has changed.")
     stable, beta, releases = current_publications(repo)
     release = next((entry for entry in releases if entry["tag_name"] == tag), None)
     if release is None or release["draft"]:
@@ -240,18 +301,22 @@ def finish_release(repo, pending):
             "Automatic checks verified the Android TV upgrade before publication.\n",
             encoding="utf-8",
         )
-        flags = ["--prerelease", "--latest=false"] if channel == "beta" else ["--latest"]
+        prerelease_flags = ["--prerelease"] if channel == "beta" else []
+        latest_flag = "--latest=false" if channel == "beta" else "--latest"
         if release is None:
-            run(GH, "release", "create", tag, str(apk), "--repo", FORK,
+            run(GH, "release", "create", tag, *apks.values(), "--repo", FORK,
                 "--draft", "--verify-tag", "--title", f"Nexus Media {tag.removeprefix('v')}",
-                "--notes-file", notes, *flags, cwd=repo)
-        elif not release["assets"]:
-            run(GH, "release", "upload", tag, str(apk), "--repo", FORK, cwd=repo)
+                "--notes-file", notes, "--latest=false", *prerelease_flags, cwd=repo)
+        else:
+            uploaded = verify_publication(release, plan, draft=True, allow_partial=True)
+            missing = [apk for name, apk in apks.items() if name not in uploaded]
+            if missing:
+                run(GH, "release", "upload", tag, *missing, "--repo", FORK, cwd=repo)
 
         _, _, releases = current_publications(repo)
         release = next((entry for entry in releases if entry["tag_name"] == tag), None)
         verify_publication(release, plan, draft=True)
-        run(GH, "release", "edit", tag, "--repo", FORK, "--draft=false", *flags, cwd=repo)
+        run(GH, "release", "edit", tag, "--repo", FORK, "--draft=false", latest_flag, *prerelease_flags, cwd=repo)
 
     stable, beta, releases = current_publications(repo)
     verified = next((entry for entry in releases if entry["tag_name"] == tag), None)
@@ -262,13 +327,18 @@ def finish_release(repo, pending):
     logging.info("Published Nexus %s %s from Nuvio %s.", channel, tag, plan["upstream"])
 
 
-def verify_publication(release, plan, *, draft):
+def verify_publication(release, plan, *, draft, allow_partial=False):
     if (not release or release["draft"] != draft
-            or release["prerelease"] != (plan["channel"] == "beta")
-            or len(release["assets"]) != 1
-            or release["assets"][0]["name"] != ASSET
-            or release["assets"][0]["digest"] != plan["digest"]):
-        raise SyncError("GitHub release metadata or APK digest differs from the verified candidate.")
+            or release["prerelease"] != (plan["channel"] == "beta")):
+        raise SyncError("GitHub release metadata differs from the verified candidate.")
+    expected = expected_asset_digests(plan)
+    assets = release["assets"]
+    uploaded = {asset["name"]: asset["digest"] for asset in assets}
+    if (len(uploaded) != len(assets)
+            or not uploaded.items() <= expected.items()
+            or (not allow_partial and uploaded != expected)):
+        raise SyncError("GitHub APK digests differ from the verified candidate.")
+    return uploaded
 
 
 def sync_channel(repo, state, channel, upstream, check):
@@ -299,28 +369,41 @@ def sync_channel(repo, state, channel, upstream, check):
         return f"Nuvio {tag} can be built for Nexus {channel}."
 
     version = next_version(repo, heads, published.values(), channel)
-    workspace = state / f"preview-{channel}-{tag}"
-    commit = prepare_candidate(repo, workspace, base, source, channel, tag, version)
+    checkouts = build_worktrees(state)
+    merge_workspace = state / f"preview-{channel}-{tag}"
+    while merge_workspace in checkouts.values():
+        merge_workspace = merge_workspace.with_name(f"merge-{merge_workspace.name}")
+    commit = prepare_candidate(repo, merge_workspace, base, source, channel, tag, version)
+    build_workspace = checkouts[channel]
+    prepare_build_checkout(repo, build_workspace, commit)
     stable_apk = download_baseline(repo, state, stable)
-    beta_apk = download_baseline(repo, state, beta) if beta else None
+    beta_apk = None
+    if beta:
+        emulator_asset = INTEL_ASSET if any(asset["name"] == INTEL_ASSET for asset in beta["assets"]) else ASSET
+        beta_apk = download_baseline(repo, state, beta, asset_name=emulator_asset)
     output = state / "candidates" / version[0]
     output.mkdir(parents=True, exist_ok=True)
     log_path = output / "verification.log"
-    logging.info("Verifying Nexus %s from Nuvio %s in %s.", version[0], tag, workspace)
+    logging.info("Verifying Nexus %s from Nuvio %s in %s.", version[0], tag, build_workspace)
     try:
         with log_path.open("w", encoding="utf-8") as log:
             run(POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "RemoteSigned",
                 "-File", SCRIPTS / "verify-nexus-release.ps1",
-                "-Repo", repo, "-Source", workspace, "-Output", output,
+                "-Repo", repo, "-Source", build_workspace, "-Output", output,
                 "-VersionName", version[0], "-VersionCode", version[1],
-                "-StableApk", stable_apk, *(["-BetaApk", beta_apk] if beta_apk else []),
+                "-StableApk", stable_apk, *(["-BetaApk", beta_apk] if beta_apk else []), "-SmallApks",
                 cwd=repo, stdout=log)
     except (SyncError, subprocess.SubprocessError) as error:
         raise SyncError(f"Release verification failed. See {log_path}.") from error
+    if (git(build_workspace, "rev-parse", "HEAD").stdout.strip() != commit
+            or git(build_workspace, "status", "--porcelain").stdout.strip()):
+        raise SyncError(f"The build checkout changed during verification: {build_workspace}.")
     apk = output / ASSET
-    write_json(pending, {"channel": channel, "tag": f"v{version[0]}", "upstream": tag,
-                         "base": base, "commit": commit, "apk": str(apk), "digest": digest(apk),
-                         "stable": stable["tag_name"], "beta": beta and beta["tag_name"]})
+    plan = {"channel": channel, "tag": f"v{version[0]}", "upstream": tag,
+            "base": base, "commit": commit, "apk": str(apk), "digest": digest(apk),
+            "stable": stable["tag_name"], "beta": beta and beta["tag_name"]}
+    plan["device_digests"] = {name: digest(output / name) for name in DEVICE_ASSETS}
+    write_json(pending, plan)
     finish_release(repo, pending)
     return f"Published Nexus v{version[0]} from Nuvio {tag}."
 

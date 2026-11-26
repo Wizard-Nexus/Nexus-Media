@@ -1490,6 +1490,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                     }
 
                     override fun onRenderedFirstFrame() {
+                        markLivePlaybackStarted(frameRendered = true)
                         val isFirstFrame = !hasRenderedFirstFrame  // capture BEFORE flipping
                         hasRenderedFirstFrame = true
                         if (isFirstFrame) recordPlayedRelease()

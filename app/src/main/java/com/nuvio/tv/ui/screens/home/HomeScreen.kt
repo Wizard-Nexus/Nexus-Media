@@ -10,6 +10,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -91,7 +93,8 @@ fun HomeScreen(
     onContinueWatchingStartFromBeginning: (ContinueWatchingItem) -> Unit = onContinueWatchingClick,
     onContinueWatchingPlayManually: (ContinueWatchingItem) -> Unit = onContinueWatchingClick,
     onNavigateToCatalogSeeAll: (String, String, String) -> Unit = { _, _, _ -> },
-    onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> }
+    onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
+    liveTvShortcuts: (@Composable () -> Unit)? = null
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -281,6 +284,14 @@ fun HomeScreen(
                 Unit
             }
 
+            liveTvShortcuts != null && (!hasAnyContent || (uiState.error != null && !hasCatalogContent)) -> {
+                Box(
+                    modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(36.dp)
+                ) {
+                    liveTvShortcuts()
+                }
+            }
+
             uiState.error == noAddonsError && uiState.catalogRows.isEmpty() -> {
                 if (!homeStableGateReleased) {
                     Unit
@@ -391,7 +402,8 @@ fun HomeScreen(
                                 onNavigateToCatalogSeeAll = onNavigateToCatalogSeeAllStable,
                                 onNavigateToFolderDetail = onNavigateToFolderDetailStable,
                                 isCatalogItemWatched = isCatalogItemWatched,
-                                onCatalogItemLongPress = onCatalogItemLongPress
+                                onCatalogItemLongPress = onCatalogItemLongPress,
+                                liveTvShortcuts = liveTvShortcuts
                             )
 
                             HomeLayout.GRID -> GridHomeRoute(
@@ -406,7 +418,8 @@ fun HomeScreen(
                                 onNavigateToCatalogSeeAll = onNavigateToCatalogSeeAllStable,
                                 onNavigateToFolderDetail = onNavigateToFolderDetailStable,
                                 isCatalogItemWatched = isCatalogItemWatched,
-                                onCatalogItemLongPress = onCatalogItemLongPress
+                                onCatalogItemLongPress = onCatalogItemLongPress,
+                                liveTvShortcuts = liveTvShortcuts
                             )
 
                             HomeLayout.MODERN -> ModernHomeRoute(
@@ -419,7 +432,8 @@ fun HomeScreen(
                                 showContinueWatchingManualPlayOption = effectiveAutoplayEnabled,
                                 onNavigateToFolderDetail = onNavigateToFolderDetailStable,
                                 isCatalogItemWatched = isCatalogItemWatched,
-                                onCatalogItemLongPress = onCatalogItemLongPress
+                                onCatalogItemLongPress = onCatalogItemLongPress,
+                                liveTvShortcuts = liveTvShortcuts
                             )
                         }
                     }
@@ -542,7 +556,8 @@ private fun ClassicHomeRoute(
     onNavigateToCatalogSeeAll: (String, String, String) -> Unit,
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     isCatalogItemWatched: (MetaPreview) -> Boolean,
-    onCatalogItemLongPress: (MetaPreview, String) -> Unit
+    onCatalogItemLongPress: (MetaPreview, String) -> Unit,
+    liveTvShortcuts: (@Composable () -> Unit)?
 ) {
     val focusState by viewModel.focusState.collectAsStateWithLifecycle()
     val scrollToTopTrigger by viewModel.scrollToTopTrigger.collectAsStateWithLifecycle()
@@ -568,6 +583,7 @@ private fun ClassicHomeRoute(
         },
         isCatalogItemWatched = isCatalogItemWatched,
         onCatalogItemLongPress = onCatalogItemLongPress,
+        liveTvShortcuts = liveTvShortcuts,
         onRequestTrailerPreview = { item ->
             viewModel.requestTrailerPreview(item)
         },
@@ -601,7 +617,8 @@ private fun GridHomeRoute(
     onNavigateToCatalogSeeAll: (String, String, String) -> Unit,
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     isCatalogItemWatched: (MetaPreview) -> Boolean,
-    onCatalogItemLongPress: (MetaPreview, String) -> Unit
+    onCatalogItemLongPress: (MetaPreview, String) -> Unit,
+    liveTvShortcuts: (@Composable () -> Unit)?
 ) {
     val gridFocusState by viewModel.gridFocusState.collectAsStateWithLifecycle()
     val scrollToTopTrigger by viewModel.scrollToTopTrigger.collectAsStateWithLifecycle()
@@ -630,6 +647,7 @@ private fun GridHomeRoute(
         },
         isCatalogItemWatched = isCatalogItemWatched,
         onCatalogItemLongPress = onCatalogItemLongPress,
+        liveTvShortcuts = liveTvShortcuts,
         onItemFocus = remember(viewModel) {
             { item ->
                 viewModel.onItemFocus(item)
@@ -654,7 +672,8 @@ private fun ModernHomeRoute(
     showContinueWatchingManualPlayOption: Boolean,
     onNavigateToFolderDetail: (String, String) -> Unit = { _, _ -> },
     isCatalogItemWatched: (MetaPreview) -> Boolean,
-    onCatalogItemLongPress: (MetaPreview, String) -> Unit
+    onCatalogItemLongPress: (MetaPreview, String) -> Unit,
+    liveTvShortcuts: (@Composable () -> Unit)?
 ) {
     val focusState by viewModel.focusState.collectAsStateWithLifecycle()
     val scrollToTopTrigger by viewModel.scrollToTopTrigger.collectAsStateWithLifecycle()
@@ -714,6 +733,7 @@ private fun ModernHomeRoute(
         onRemoveContinueWatching = removeContinueWatching,
         isCatalogItemWatched = isCatalogItemWatched,
         onCatalogItemLongPress = onCatalogItemLongPress,
+        liveTvShortcuts = liveTvShortcuts,
         onNavigateToFolderDetail = onNavigateToFolderDetail,
         onItemFocus = remember(viewModel) {
             { item -> viewModel.onItemFocus(item) }

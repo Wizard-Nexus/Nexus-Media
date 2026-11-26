@@ -110,7 +110,8 @@ fun ClassicHomeContent(
     onSaveFocusState: (Int, Int, String?, Map<String, String>, Map<String, Int>, Map<String, String>, Int, Int) -> Unit,
     onFocusedRowKeyChanged: (String?) -> Unit = {},
     scrollToTopTrigger: Int = 0,
-    onRequestLazyCatalogLoad: (String) -> Unit = {}
+    onRequestLazyCatalogLoad: (String) -> Unit = {},
+    liveTvShortcuts: (@Composable () -> Unit)? = null
 ) {
     val defaultBringIntoViewSpec = LocalBringIntoViewSpec.current
     val density = LocalDensity.current
@@ -708,6 +709,12 @@ fun ClassicHomeContent(
                     posterTitleOverride = classicPosterTitleStyle,
                     listState = cwListState
                 )
+            }
+        }
+
+        if (liveTvShortcuts != null) {
+            item(key = "live_tv_shortcuts") {
+                Box(Modifier.padding(horizontal = NuvioTheme.spacing.xl)) { liveTvShortcuts() }
             }
         }
 

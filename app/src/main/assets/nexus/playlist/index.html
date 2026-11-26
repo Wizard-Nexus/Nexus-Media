@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark">
+  <title>Set up your playlist · Nexus Media</title>
+  <link rel="stylesheet" href="/pair.css">
+  <script type="module" src="/pair.js"></script>
+</head>
+<body>
+  <main>
+    <p class="brand">Nexus Media</p>
+    <h1>Connect your TV playlist</h1>
+    <p>Enter the details from your Xtream provider. Finish on the TV once the connection is verified.</p>
+    <form autocomplete="off">
+      <label for="server">Server or playlist URL</label>
+      <input id="server" type="text" inputmode="url" placeholder="https://provider.example:443" maxlength="2048" autocapitalize="off" spellcheck="false" required>
+      <label for="username">Username</label>
+      <input id="username" type="text" maxlength="512" autocapitalize="off" spellcheck="false">
+      <label for="password">Password</label>
+      <input id="password" type="password" maxlength="512" autocomplete="off">
+      <p class="hint">If your playlist URL already contains your username and password, you can leave those fields blank.</p>
+      <button type="submit" disabled>Test connection</button>
+    </form>
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+    <noscript>Enable JavaScript, then scan the setup code again.</noscript>
+  </main>
+</body>
+</html>

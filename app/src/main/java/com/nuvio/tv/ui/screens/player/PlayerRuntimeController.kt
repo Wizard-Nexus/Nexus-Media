@@ -370,6 +370,20 @@ class PlayerRuntimeController(
     internal val _playbackTimeline = MutableStateFlow(PlaybackTimelineState())
     val playbackTimeline: StateFlow<PlaybackTimelineState> = _playbackTimeline.asStateFlow()
 
+    private val _livePlaybackStarted = MutableStateFlow<Boolean?>(null)
+    internal val livePlaybackStarted = _livePlaybackStarted.asStateFlow()
+
+    internal fun markLivePlaybackStarted(frameRendered: Boolean) {
+        if (contentType != "channel" || _livePlaybackStarted.value == true) return
+        _livePlaybackStarted.value = frameRendered
+        if (frameRendered) {
+            launchStartedAtElapsedMs?.let { start ->
+                val elapsed = (android.os.SystemClock.elapsedRealtime() - start).coerceAtLeast(0L)
+                Log.d(TAG, "LIVE_CHANNEL_START clickToFirstFrameMs=$elapsed")
+            }
+        }
+    }
+
     internal val liveWatchClock = LivePlaybackWatchClock()
     internal var livePlaybackLatched: Boolean = false
     internal var mpvDurationGrowth = LivePlaybackUiPolicy.DurationGrowth()
