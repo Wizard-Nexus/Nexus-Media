@@ -45,6 +45,24 @@ class LiveTvGuideHistoryTest {
     }
 
     @Test
+    fun searchesTeamNamesInRecentCachedProgrammes() {
+        val sports = LiveChannel(31, "Sport One", "Sport")
+        val hidden = LiveChannel(32, "Hidden Sport", "Hidden")
+        val bruins = on(2).copy(title = "Boston Bruins at Anaheim Ducks")
+        val stars = on(3).copy(title = "NHL Hockey", description = "The Anaheim Ducks play the Dallas Stars")
+        val older = on(6).copy(title = "Anaheim Ducks at Los Angeles Kings")
+        val tomorrow = on(-1).copy(title = "Seattle Kraken at Anaheim Ducks")
+        val schedules = sequenceOf(
+            sports.id to listOf(older, stars, bruins, tomorrow),
+            hidden.id to listOf(bruins)
+        )
+
+        val actual = findGuideProgrammes("Anaheim Ducks", mapOf(sports.id to sports), schedules, at(3), now)
+        assertEquals(listOf(bruins, stars, tomorrow), actual.map { it.programme })
+        assertEquals(listOf(sports, sports, sports), actual.map { it.channel })
+    }
+
+    @Test
     fun overnightListingStartsTheJumpAtTheBeginningOfTheAllowedDay() {
         val overnight = LiveProgramme("Overnight", at(2, 23), at(1, 2))
         val endsAtMidnight = LiveProgramme("Earlier", at(2, 20), at(1))

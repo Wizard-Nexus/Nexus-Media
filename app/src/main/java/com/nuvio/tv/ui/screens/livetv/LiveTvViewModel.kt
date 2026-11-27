@@ -351,6 +351,17 @@ internal class LiveTvViewModel @Inject constructor(
         _state.update { it.copy(history = changed) }
     }
 
+    suspend fun searchProgrammes(query: String): List<LiveSportsEvent> {
+        val active = currentProfile() ?: return emptyList()
+        val source = active.source ?: return emptyList()
+        val snapshot = _state.value
+        val channels = snapshot.visibleChannels().associateBy { it.id }
+        val results = withContext(Dispatchers.IO) {
+            storage.searchGuide(active.id, source, channels, snapshot.guide, query)
+        }
+        return results.takeIf { currentProfile() === active && active.source === source }.orEmpty()
+    }
+
     suspend fun readPlaylistConnections(profileId: Int, sourceKey: String): XtreamConnections? {
         val active = currentProfile()?.takeIf { it.id == profileId } ?: return null
         val source = active.source?.takeIf { it.cacheKey == sourceKey } ?: return null

@@ -35,12 +35,19 @@
     <string name="live_tv_vlc_pause">Pause</string>
     <string name="live_tv_vlc_resume">Resume</string>
     <string name="live_tv_playlist">Playlist</string>
-    <string name="live_tv_search">Search channels</string>
-    <string name="live_tv_search_hint">Channel or category</string>
+    <string name="live_tv_search">Search guide</string>
+    <string name="live_tv_search_hint">Channel, programme or team</string>
     <string name="live_tv_search_results">Results for “%1$s”</string>
     <string name="live_tv_search_empty">No channels match your search.</string>
     <string name="live_tv_show_results">Show results</string>
     <string name="live_tv_clear_search">Clear search</string>
+    <string name="live_tv_search_again">Search again</string>
+    <string name="live_tv_search_programmes_loading">Searching guide listings…</string>
+    <string name="live_tv_search_no_matches">No matching programmes or channels in your guide.</string>
+    <plurals name="live_tv_search_matching_channels">
+        <item quantity="one">Show %d matching channel</item>
+        <item quantity="other">Show %d matching channels</item>
+    </plurals>
     <string name="live_tv_favourites">Favourites</string>
     <string name="live_tv_recent">Recently watched</string>
     <string name="live_tv_guide">TV Guide</string>

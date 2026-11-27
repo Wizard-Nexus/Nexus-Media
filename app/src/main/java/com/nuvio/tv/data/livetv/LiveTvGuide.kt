@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
+import java.text.Normalizer
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -50,6 +51,35 @@ internal fun mergeGuideHistory(
     }
     return (retained + fresh).sortedBy { it.startsAt }
 }
+
+internal fun findGuideProgrammes(
+    query: String,
+    channels: Map<Long, LiveChannel>,
+    schedules: Sequence<Pair<Long, List<LiveProgramme>>>,
+    cutoff: Long,
+    now: Long
+): List<LiveSportsEvent> {
+    val words = guideSearchWords.split(normalizeGuideText(query)).filter(String::isNotBlank)
+    if (words.isEmpty()) return emptyList()
+
+    return schedules.flatMap { (id, programmes) ->
+        val channel = channels[id] ?: return@flatMap emptySequence()
+        programmes.asSequence().filter { programme ->
+            if (programme.endsAt <= cutoff) return@filter false
+            val searchable = normalizeGuideText(programme.title + " " + programme.description.orEmpty())
+            words.all { searchable.contains(it) }
+        }.map { LiveSportsEvent(channel, it) }
+    }.sortedWith(
+        compareBy<LiveSportsEvent> { it.programme.startsAt > now }
+            .thenBy { if (it.programme.startsAt > now) it.programme.startsAt else -it.programme.startsAt }
+    ).take(100).toList()
+}
+
+private val guideSearchWords = Regex("""[^\p{L}\p{N}]+""")
+private val guideSearchMarks = Regex("""\p{M}+""")
+
+private fun normalizeGuideText(value: String): String =
+    Normalizer.normalize(value, Normalizer.Form.NFD).replace(guideSearchMarks, "").lowercase(Locale.ROOT)
 
 @Serializable
 internal data class LiveProgramme(

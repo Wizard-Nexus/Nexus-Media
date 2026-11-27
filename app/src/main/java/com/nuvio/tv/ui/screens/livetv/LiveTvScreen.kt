@@ -14,11 +14,13 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -29,6 +31,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -43,6 +46,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -50,12 +54,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Button
+import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.LocalContentFocusRequester
 import com.nuvio.tv.R
 import com.nuvio.tv.data.livetv.LiveChannel
 import com.nuvio.tv.data.livetv.XtreamConnections
+import com.nuvio.tv.data.livetv.canReplay
 import com.nuvio.tv.data.livetv.earlierGuideDateTargets
 import com.nuvio.tv.data.livetv.groupNames
 import com.nuvio.tv.data.livetv.guideHistoryStart
@@ -211,6 +217,8 @@ private fun LiveTvGuideContent(
     }
     var query by rememberSaveable { mutableStateOf(initialBrowse?.getString("query").orEmpty()) }
     var searching by remember { mutableStateOf(false) }
+    var searchText by rememberSaveable { mutableStateOf(query) }
+    var submittedSearch by remember { mutableStateOf<String?>(null) }
     var choosingDate by remember { mutableStateOf(false) }
     var choosingColour by remember { mutableStateOf(false) }
     var eventDetails by remember { mutableStateOf<LiveSportsEvent?>(null) }
@@ -399,7 +407,7 @@ private fun LiveTvGuideContent(
     }
     BackHandler(
         playingId == null && !categoriesVisible && !searching && !showRecordings &&
-            !choosingDate && !choosingColour && eventDetails == null
+            !choosingDate && !choosingColour && eventDetails == null && submittedSearch == null
     ) { showCategories() }
 
     BoxWithConstraints(modifier.fillMaxSize().background(GuideRail)) {
@@ -580,16 +588,46 @@ private fun LiveTvGuideContent(
     }
     if (searching) {
         LiveTvSearchDialog(
-            initialQuery = query,
+            initialQuery = searchText,
             onSubmit = {
-                section = LiveTvSection.ALL
-                group = null
-                query = it
+                searchText = it.trim()
                 searching = false
-                resetList()
+                if (searchText.isEmpty()) {
+                    query = ""
+                    resetList()
+                } else {
+                    submittedSearch = searchText
+                }
             },
             onDismiss = { searching = false }
         )
+    }
+    submittedSearch?.let { term ->
+        val programmes by produceState<List<LiveSportsEvent>?>(null, term, state.sourceKey) {
+            value = viewModel.searchProgrammes(term)
+        }
+        if (eventDetails == null) {
+            val matchingChannels = remember(channels, term) { channels.count { it.matchesLiveTvSearch(term) } }
+            LiveTvSearchResultsDialog(
+                term = term,
+                programmes = programmes,
+                channelCount = matchingChannels,
+                now = now,
+                onSelect = { eventDetails = it },
+                onChannels = {
+                    submittedSearch = null
+                    section = LiveTvSection.ALL
+                    group = null
+                    query = term
+                    resetList()
+                },
+                onSearchAgain = {
+                    submittedSearch = null
+                    searching = true
+                },
+                onDismiss = { submittedSearch = null }
+            )
+        }
     }
     eventDetails?.let { event ->
         LiveTvProgrammeDialog(
@@ -599,8 +637,13 @@ private fun LiveTvGuideContent(
                 it.profileId == state.profileId && it.sourceKey == state.sourceKey &&
                     it.matches(event.channel, event.programme)
             },
-            onWatch = { play(event.channel) },
-            onPlayArchive = onPlayArchive,
+            onWatch = {
+                submittedSearch = null
+                play(event.channel)
+            },
+            onPlayArchive = { archive ->
+                onPlayArchive(archive).also { if (it) submittedSearch = null }
+            },
             onDismiss = { eventDetails = null }
         )
     }
@@ -700,6 +743,95 @@ private fun LiveTvSearchDialog(initialQuery: String, onSubmit: (String) -> Unit,
             Button(onClick = { onSubmit(value) }, modifier = Modifier.focusRequester(results)) {
                 Text(stringResource(R.string.live_tv_show_results))
             }
+        }
+    }
+}
+
+
+@Composable
+private fun LiveTvSearchResultsDialog(
+    term: String,
+    programmes: List<LiveSportsEvent>?,
+    channelCount: Int,
+    now: Long,
+    onSelect: (LiveSportsEvent) -> Unit,
+    onChannels: () -> Unit,
+    onSearchAgain: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val first = remember(term) { FocusRequester() }
+    NuvioDialog(
+        onDismiss = onDismiss,
+        title = stringResource(R.string.live_tv_search_results, term),
+        width = 640.dp
+    ) {
+        val results = programmes.orEmpty()
+        if (results.isNotEmpty()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 255.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+                contentPadding = PaddingValues(vertical = 3.dp)
+            ) {
+                itemsIndexed(results, key = { index, _ -> index }) { index, event ->
+                    val programme = event.programme
+                    Button(
+                        onClick = { onSelect(event) },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 55.dp)
+                            .then(if (index == 0) Modifier.focusRequester(first) else Modifier),
+                        scale = ButtonDefaults.scale(focusedScale = 1f)
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(programme.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    stringResource(
+                                        R.string.live_tv_guide_event_time,
+                                        event.channel.name,
+                                        "${formatGuideDate(programme.startsAt)} ${formatProgrammeTime(programme.startsAt)}",
+                                        formatProgrammeTime(programme.endsAt)
+                                    ),
+                                    color = GuideMuted,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            if (programme.canReplay(event.channel, now)) {
+                                Text(stringResource(R.string.live_tv_play_replay), color = GuideAccent)
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (programmes == null || channelCount == 0) {
+            Text(
+                stringResource(
+                    if (programmes == null) R.string.live_tv_search_programmes_loading
+                    else R.string.live_tv_search_no_matches
+                ),
+                color = GuideMuted
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (channelCount > 0) {
+                GuideButton(
+                    pluralStringResource(R.plurals.live_tv_search_matching_channels, channelCount, channelCount),
+                    onChannels,
+                    if (results.isEmpty()) Modifier.focusRequester(first) else Modifier
+                )
+            }
+            GuideButton(
+                stringResource(R.string.live_tv_search_again), onSearchAgain,
+                if (results.isEmpty() && channelCount == 0) Modifier.focusRequester(first) else Modifier
+            )
+        }
+        LaunchedEffect(programmes) {
+            withFrameNanos { }
+            first.requestFocus()
         }
     }
 }

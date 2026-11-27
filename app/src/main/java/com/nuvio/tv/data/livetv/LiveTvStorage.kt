@@ -144,6 +144,25 @@ internal class LiveTvStorage @Inject constructor(@ApplicationContext context: Co
         merged
     }
 
+    fun searchGuide(
+        profileId: Int,
+        source: XtreamSource,
+        channels: Map<Long, LiveChannel>,
+        visibleSchedules: Map<Long, List<LiveProgramme>>,
+        query: String
+    ): List<LiveSportsEvent> {
+        val folder = File(guideDirectory(profileId), source.cacheKey)
+        val cachedIds = synchronized(cacheLock) {
+            folder.listFiles { file -> file.extension == "json" }
+                ?.mapNotNull { it.nameWithoutExtension.toLongOrNull() }.orEmpty()
+        }
+        val ids = (visibleSchedules.keys + cachedIds).asSequence().filter(channels::containsKey)
+        val schedules = ids.map { id ->
+            id to (visibleSchedules[id] ?: readGuide(profileId, source, id))
+        }
+        return findGuideProgrammes(query, channels, schedules, guideCutoff(profileId), System.currentTimeMillis())
+    }
+
     fun trimGuideHistory(profileId: Int, source: XtreamSource) = synchronized(cacheLock) {
         val cutoff = guideCutoff(profileId)
         val folder = File(guideDirectory(profileId), source.cacheKey)
