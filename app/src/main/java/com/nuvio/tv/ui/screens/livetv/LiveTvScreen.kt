@@ -67,6 +67,7 @@ import kotlin.math.roundToLong
 private enum class LiveTvSection(val label: Int) {
     ALL(R.string.live_tv_all),
     FAVOURITES(R.string.live_tv_favourites),
+    RECORDINGS(R.string.live_tv_recordings),
     RECENT(R.string.live_tv_recent),
     GUIDE(R.string.live_tv_guide),
     SPORTS(R.string.live_tv_sports)
@@ -74,7 +75,10 @@ private enum class LiveTvSection(val label: Int) {
 
 internal const val LIVE_TV_GUIDE_STATE = "liveTvGuideState"
 
-private val GuideSections = listOf(LiveTvSection.FAVOURITES, LiveTvSection.ALL, LiveTvSection.RECENT, LiveTvSection.SPORTS)
+private val GuideSections = listOf(
+    LiveTvSection.FAVOURITES, LiveTvSection.RECORDINGS, LiveTvSection.ALL,
+    LiveTvSection.RECENT, LiveTvSection.SPORTS
+)
 
 @Composable
 internal fun LiveTvScreen(
@@ -308,7 +312,7 @@ private fun LiveTvGuideContent(
     LaunchedEffect(railFocusRequest, categoriesVisible) {
         if (!categoriesVisible || railFocusRequest == 0) return@LaunchedEffect
         val groupIndex = groups.indexOf(group)
-        val index = if (groupIndex < 0) GuideSections.indexOf(sectionKey) else GuideSections.size + 2 + groupIndex
+        val index = if (groupIndex < 0) GuideSections.indexOf(sectionKey) else GuideSections.size + 1 + groupIndex
         railState.scrollToItem(index.coerceAtLeast(0))
         withFrameNanos { }
         runCatching { categoryFocus.requestFocus() }
@@ -389,17 +393,20 @@ private fun LiveTvGuideContent(
                     LiveTvCategoryRail(
                         groups, railState, sectionKey, group, categoryFocus, firstFocus,
                         onSection = { selected ->
-                            section = selected
-                            group = null
-                            query = ""
-                            resetList()
+                            if (selected == LiveTvSection.RECORDINGS) {
+                                showRecordings = true
+                            } else {
+                                section = selected
+                                group = null
+                                query = ""
+                                resetList()
+                            }
                         },
                         onGroup = { selected ->
                             group = selected
                             query = ""
                             resetList()
                         },
-                        onRecordings = { showRecordings = true },
                         enterChannels = { items.isNotEmpty() && runCatching { rowFocus.requestFocus() }.getOrDefault(false) },
                         modifier = Modifier.width(railWidth).fillMaxHeight()
                     )
@@ -513,7 +520,6 @@ private fun LiveTvCategoryRail(
     firstFocus: FocusRequester,
     onSection: (LiveTvSection) -> Unit,
     onGroup: (String) -> Unit,
-    onRecordings: () -> Unit,
     enterChannels: () -> Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -530,12 +536,6 @@ private fun LiveTvCategoryRail(
                 if (item == LiveTvSection.FAVOURITES) "★  $label" else label,
                 selected, selectedFocus, firstFocus, enterChannels
             ) { onSection(item) }
-        }
-        item("recordings") {
-            GuideCategoryItem(
-                stringResource(R.string.live_tv_recordings), false, selectedFocus, firstFocus, enterChannels,
-                onClick = onRecordings
-            )
         }
         if (groups.isNotEmpty()) {
             item("category-heading") {
