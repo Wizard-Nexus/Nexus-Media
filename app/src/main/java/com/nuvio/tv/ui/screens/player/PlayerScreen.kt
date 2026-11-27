@@ -188,6 +188,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.tv.data.livetv.LiveChannel
 import com.nuvio.tv.data.livetv.nowAndNext
 import com.nuvio.tv.ui.screens.livetv.KeepLiveTvGuideUpdated
+import com.nuvio.tv.ui.screens.livetv.LiveTvChannelLoading
 import com.nuvio.tv.ui.screens.livetv.LiveTvEdgeButton
 import com.nuvio.tv.ui.screens.livetv.LiveTvFpsReadout
 import com.nuvio.tv.ui.screens.livetv.LiveTvPlaybackGuide
@@ -264,6 +265,10 @@ internal fun PlayerScreen(
     var showLiveGuide by rememberSaveable { mutableStateOf(liveTvControls?.initialGuide != null) }
     var browseOnOpen by remember { mutableStateOf(liveTvControls?.initialGuide) }
     val liveGuideVisible = showLiveGuide && liveControlsAvailable
+    val waitingForLiveVideo = uiState.isBuffering &&
+        (liveGuideVisible || !viewModel.controller.hasRenderedFirstFrame)
+    val showChannelLoading = liveTvControls != null && uiState.error == null &&
+        (uiState.showLoadingOverlay || waitingForLiveVideo)
     val liveProgramme = if (liveControlsAvailable && liveTvControls != null) {
         liveState?.guide?.get(liveTvControls.currentId).orEmpty().nowAndNext(liveGuideClock()).first
     } else null
@@ -1427,11 +1432,11 @@ internal fun PlayerScreen(
                     )
                 }
 
-                if (liveGuideVisible) {
-                    when {
-                        uiState.error != null -> LiveTvPreviewStatus(R.string.live_tv_preview_unavailable)
-                        uiState.showLoadingOverlay || uiState.isBuffering -> LiveTvPreviewStatus(R.string.live_tv_vlc_loading)
-                    }
+                if (liveTvControls != null) {
+                    LiveTvChannelLoading(showChannelLoading, channelIndex[liveTvControls.currentId])
+                }
+                if (liveGuideVisible && uiState.error != null) {
+                    LiveTvPreviewStatus(R.string.live_tv_preview_unavailable)
                 }
 
                 if (postPlayRecommendationState.canReturnToPlayer) {
@@ -1494,7 +1499,7 @@ internal fun PlayerScreen(
         }
 
         LoadingOverlay(
-            visible = (uiState.showLoadingOverlay || uiState.showEpisodeAutoPlayLoadingOverlay) &&
+            visible = liveTvControls == null && (uiState.showLoadingOverlay || uiState.showEpisodeAutoPlayLoadingOverlay) &&
                 uiState.error == null && !postPlayRecommendationState.isVisible,
             backdropUrl = uiState.backdrop,
             logoUrl = uiState.logo,
@@ -1594,7 +1599,7 @@ internal fun PlayerScreen(
         // isBuffering state changes only recompose this small subtree instead
         // of the entire PlayerScreen.
         PlayerBufferingIndicator(
-            isBuffering = uiState.isBuffering && !postPlayRecommendationState.isVisible,
+            isBuffering = uiState.isBuffering && !showChannelLoading && !postPlayRecommendationState.isVisible,
             showLoadingOverlay = uiState.showLoadingOverlay,
             isTorrentStream = uiState.isTorrentStream,
             torrentBufferingMessage = uiState.torrentBufferingMessage,

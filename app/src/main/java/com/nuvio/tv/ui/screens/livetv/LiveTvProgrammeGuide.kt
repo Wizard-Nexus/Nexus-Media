@@ -57,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Border
@@ -506,7 +507,7 @@ internal fun LiveTvGuideRow(
 }
 
 @Composable
-private fun ChannelLogo(channel: LiveChannel, modifier: Modifier) {
+internal fun ChannelLogo(channel: LiveChannel, modifier: Modifier, fallbackTextSize: TextUnit = 11.sp) {
     var ready by remember(channel.logoUrl) { mutableStateOf(false) }
     Box(modifier, contentAlignment = Alignment.Center) {
         if (!ready) {
@@ -518,7 +519,7 @@ private fun ChannelLogo(channel: LiveChannel, modifier: Modifier) {
                 Modifier.fillMaxSize().clip(GuideShape).background(GuideCard),
                 contentAlignment = Alignment.Center
             ) {
-                Text(initials.ifBlank { "TV" }, color = GuideAccent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                Text(initials.ifBlank { "TV" }, color = GuideAccent, fontWeight = FontWeight.Bold, fontSize = fallbackTextSize)
             }
         }
         channel.logoUrl?.let { logo ->

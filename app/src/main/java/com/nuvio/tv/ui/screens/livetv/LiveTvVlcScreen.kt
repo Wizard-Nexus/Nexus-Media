@@ -334,18 +334,9 @@ internal fun LiveTvVlcScreen(
                 },
                 update = { layout = it }
             )
-            if (guideVisible) {
-                when (playback) {
-                    VlcPlayback.OPENING -> LiveTvPreviewStatus(R.string.live_tv_vlc_loading)
-                    VlcPlayback.FAILED -> LiveTvPreviewStatus(R.string.live_tv_preview_unavailable)
-                    else -> Unit
-                }
-            } else if (playback == VlcPlayback.OPENING) {
-                Text(
-                    text = stringResource(R.string.live_tv_vlc_loading),
-                    modifier = Modifier.align(Alignment.Center),
-                    color = Color.White
-                )
+            LiveTvChannelLoading(playback == VlcPlayback.OPENING, current)
+            if (guideVisible && failed) {
+                LiveTvPreviewStatus(R.string.live_tv_preview_unavailable)
             }
         }
         if (controlsVisible) {

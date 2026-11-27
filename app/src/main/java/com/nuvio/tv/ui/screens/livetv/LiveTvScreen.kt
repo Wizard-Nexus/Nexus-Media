@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -46,7 +47,6 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -324,7 +324,7 @@ private fun LiveTvGuideContent(
         highlightedId = null
     }
 
-    fun play(channel: LiveChannel) {
+    fun play(channel: LiveChannel, channelList: List<LiveChannel> = items): Boolean {
         val browse = Bundle().apply {
             putString("section", section.name)
             putString("group", group)
@@ -333,9 +333,10 @@ private fun LiveTvGuideContent(
             putLong("time", browsingTime)
             putLong("anchor", windowAnchor)
         }
-        if (onPlay(channel, if (items.any { it.id == channel.id }) items else listOf(channel), browse)) {
-            restorePlaybackFocus = true
-        }
+        val tuningOrder = if (channelList.any { it.id == channel.id }) channelList else listOf(channel)
+        val started = onPlay(channel, tuningOrder, browse)
+        if (started) restorePlaybackFocus = true
+        return started
     }
 
     fun select(channel: LiveChannel, programme: LiveProgramme?) {
@@ -668,21 +669,17 @@ private fun LiveTvGuideContent(
                 onDismiss = { choosingDay = false }
             )
         } else if (eventDetails == null) {
-            val matchingChannels = remember(channels, term) { channels.count { it.matchesLiveTvSearch(term) } }
+            val matchingChannels = remember(channels, term) { channels.filter { it.matchesLiveTvSearch(term) } }
             LiveTvSearchResultsDialog(
                 term = term,
+                channels = matchingChannels,
                 programmes = programmes,
-                channelCount = matchingChannels,
                 now = now,
                 dayLabel = dayLabel(effectiveDay),
                 onChooseDay = { choosingDay = true },
-                onSelect = { eventDetails = it },
-                onChannels = {
-                    submittedSearch = null
-                    section = LiveTvSection.ALL
-                    group = null
-                    query = term
-                    resetList()
+                onSelectProgramme = { eventDetails = it },
+                onSelectChannel = { channel ->
+                    if (play(channel, matchingChannels)) submittedSearch = null
                 },
                 onSearchAgain = {
                     submittedSearch = null
@@ -814,90 +811,143 @@ private fun LiveTvSearchDialog(initialQuery: String, onSubmit: (String) -> Unit,
 @Composable
 private fun LiveTvSearchResultsDialog(
     term: String,
+    channels: List<LiveChannel>,
     programmes: List<LiveSportsEvent>?,
-    channelCount: Int,
     now: Long,
     dayLabel: String,
     onChooseDay: () -> Unit,
-    onSelect: (LiveSportsEvent) -> Unit,
-    onChannels: () -> Unit,
+    onSelectProgramme: (LiveSportsEvent) -> Unit,
+    onSelectChannel: (LiveChannel) -> Unit,
     onSearchAgain: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val first = remember(term) { FocusRequester() }
+    val results = programmes.orEmpty()
+    val hasChannels = channels.isNotEmpty()
+    val focusProgramme = !hasChannels && results.isNotEmpty()
+
     NuvioDialog(
         onDismiss = onDismiss,
         title = stringResource(R.string.live_tv_search_results, term),
-        width = 640.dp
+        width = if (hasChannels) 740.dp else 640.dp,
+        contentPadding = 20.dp,
+        contentSpacing = 12.dp
     ) {
-        val results = programmes.orEmpty()
-        GuideButton(stringResource(R.string.live_tv_search_day_value, dayLabel), onChooseDay)
-        if (results.isNotEmpty()) {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 255.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp),
-                contentPadding = PaddingValues(vertical = 3.dp)
-            ) {
-                itemsIndexed(results, key = { index, _ -> index }) { index, event ->
-                    val programme = event.programme
-                    Button(
-                        onClick = { onSelect(event) },
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 55.dp)
-                            .then(if (index == 0) Modifier.focusRequester(first) else Modifier),
-                        scale = ButtonDefaults.scale(focusedScale = 1f)
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            if (hasChannels) {
+                Column(Modifier.weight(2f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(Modifier.height(31.dp), verticalAlignment = Alignment.CenterVertically) {
+                        SearchResultsHeading(stringResource(R.string.live_tv_search_channels_heading))
+                    }
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 270.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(programme.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    stringResource(
-                                        R.string.live_tv_guide_event_time,
-                                        event.channel.name,
-                                        "${formatGuideDate(programme.startsAt)} ${formatProgrammeTime(programme.startsAt)}",
-                                        formatProgrammeTime(programme.endsAt)
-                                    ),
-                                    color = GuideMuted,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            if (programme.canReplay(event.channel, now)) {
-                                Text(stringResource(R.string.live_tv_play_replay), color = GuideAccent)
+                        itemsIndexed(channels, key = { _, channel -> channel.id }) { index, channel ->
+                            Button(
+                                onClick = { onSelectChannel(channel) },
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp)
+                                    .then(if (index == 0) Modifier.focusRequester(first) else Modifier),
+                                scale = ButtonDefaults.scale(focusedScale = 1f)
+                            ) {
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(9.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    ChannelLogo(channel, Modifier.size(36.dp, 27.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(channel.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        channel.group?.let {
+                                            Text(
+                                                it,
+                                                color = GuideMuted,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-        } else if (programmes == null || channelCount == 0) {
-            Text(
-                stringResource(
-                    if (programmes == null) R.string.live_tv_search_programmes_loading
-                    else R.string.live_tv_search_no_matches
-                ),
-                color = GuideMuted
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (channelCount > 0) {
-                GuideButton(
-                    pluralStringResource(R.plurals.live_tv_search_matching_channels, channelCount, channelCount),
-                    onChannels,
-                    if (results.isEmpty()) Modifier.focusRequester(first) else Modifier
-                )
+            Column(Modifier.weight(3f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    SearchResultsHeading(stringResource(R.string.live_tv_search_programmes_heading), Modifier.weight(1f))
+                    GuideButton(stringResource(R.string.live_tv_search_day_value, dayLabel), onChooseDay)
+                }
+                if (results.isEmpty()) {
+                    val message = when {
+                        programmes == null -> R.string.live_tv_search_programmes_loading
+                        hasChannels -> R.string.live_tv_search_no_programmes
+                        else -> R.string.live_tv_search_no_matches
+                    }
+                    Text(stringResource(message), color = GuideMuted)
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 270.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        itemsIndexed(results, key = { index, _ -> index }) { index, event ->
+                            val programme = event.programme
+                            Button(
+                                onClick = { onSelectProgramme(event) },
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 55.dp)
+                                    .then(if (focusProgramme && index == 0) Modifier.focusRequester(first) else Modifier),
+                                scale = ButtonDefaults.scale(focusedScale = 1f)
+                            ) {
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(programme.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        Text(
+                                            stringResource(
+                                                R.string.live_tv_guide_event_time,
+                                                event.channel.name,
+                                                formatGuideDate(programme.startsAt) + " " + formatProgrammeTime(programme.startsAt),
+                                                formatProgrammeTime(programme.endsAt)
+                                            ),
+                                            color = GuideMuted,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    if (programme.canReplay(event.channel, now)) {
+                                        Text(
+                                            stringResource(R.string.live_tv_play_replay),
+                                            color = GuideAccent,
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            GuideButton(
-                stringResource(R.string.live_tv_search_again), onSearchAgain,
-                if (results.isEmpty() && channelCount == 0) Modifier.focusRequester(first) else Modifier
-            )
         }
-        LaunchedEffect(programmes) {
+        GuideButton(
+            stringResource(R.string.live_tv_search_again), onSearchAgain,
+            if (!hasChannels && !focusProgramme) Modifier.focusRequester(first) else Modifier
+        )
+        LaunchedEffect(term, hasChannels, focusProgramme) {
             withFrameNanos { }
             first.requestFocus()
         }
     }
+}
+
+@Composable
+private fun SearchResultsHeading(title: String, modifier: Modifier = Modifier) {
+    Text(title, modifier = modifier, color = GuideAccent, style = MaterialTheme.typography.titleMedium)
 }
