@@ -2,6 +2,7 @@ package com.nuvio.tv.ui.screens.livetv
 
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.view.KeyEvent
 import android.view.SurfaceView
 import android.view.ViewGroup
@@ -38,6 +39,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -69,6 +71,7 @@ internal fun LiveTvVlcScreen(
     viewModel: LiveTvViewModel,
     profileId: Int,
     initialChannelId: Long,
+    initialBrowse: Bundle?,
     onExit: () -> Unit
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -93,19 +96,25 @@ internal fun LiveTvVlcScreen(
     val controlsFocus = remember { FocusRequester() }
     val retryFocus = remember { FocusRequester() }
     var showControls by remember { mutableStateOf(false) }
-    var showPicker by remember { mutableStateOf(false) }
+    var showGuide by rememberSaveable { mutableStateOf(initialBrowse != null) }
+    var browseOnOpen by remember { mutableStateOf(initialBrowse) }
+    val guideVisible = showGuide && current != null
     var menuInteraction by remember { mutableIntStateOf(0) }
     var retry by remember { mutableIntStateOf(0) }
     var layout by remember { mutableStateOf<VLCVideoLayout?>(null) }
     var nativePlayer by remember(streamUrl, retry) { mutableStateOf<MediaPlayer?>(null) }
     var playback by remember(streamUrl, retry) { mutableStateOf(VlcPlayback.OPENING) }
 
-    fun tune(channel: LiveChannel) {
-        if (viewModel.tune(channel) != null) {
-            channelId = channel.id
-            showPicker = false
-            showControls = false
-        }
+    fun tune(channel: LiveChannel, channelList: List<LiveChannel>? = null): Boolean {
+        if (viewModel.tune(channel, channelList) == null) return false
+        channelId = channel.id
+        showControls = false
+        return true
+    }
+
+    fun showFullscreen() {
+        showGuide = false
+        browseOnOpen = null
     }
 
     LaunchedEffect(channelId, state.sourceKey) { viewModel.requestGuide(listOf(channelId)) }
@@ -180,9 +189,9 @@ internal fun LiveTvVlcScreen(
     }
 
     val failed = playback == VlcPlayback.FAILED
-    val controlsVisible = showControls || failed
-    LaunchedEffect(controlsVisible, failed, showPicker) {
-        if (showPicker) return@LaunchedEffect
+    val controlsVisible = (showControls || failed) && !guideVisible
+    LaunchedEffect(controlsVisible, failed, guideVisible) {
+        if (guideVisible) return@LaunchedEffect
         withFrameNanos { }
         val focus = when {
             failed -> retryFocus
@@ -191,57 +200,75 @@ internal fun LiveTvVlcScreen(
         }
         runCatching { focus.requestFocus() }
     }
-    LaunchedEffect(showControls, showPicker, playback, menuInteraction) {
-        if (showControls && !showPicker && playback == VlcPlayback.PLAYING) {
+    LaunchedEffect(showControls, guideVisible, playback, menuInteraction) {
+        if (showControls && !guideVisible && playback == VlcPlayback.PLAYING) {
             delay(7_000)
             showControls = false
         }
     }
     BackHandler {
-        if (showControls && !failed) showControls = false else onExit()
+        when {
+            guideVisible -> showFullscreen()
+            showControls && !failed -> showControls = false
+            else -> onExit()
+        }
     }
 
     Box(
         Modifier.fillMaxSize().background(Color.Black)
             .focusRequester(playerFocus)
             .onPreviewKeyEvent { event ->
-                if (showPicker) return@onPreviewKeyEvent false
                 val key = event.nativeKeyEvent
+                if (guideVisible) {
+                    if (key.keyCode != KeyEvent.KEYCODE_ESCAPE) return@onPreviewKeyEvent false
+                    if (key.action == KeyEvent.ACTION_UP && !key.isCanceled) showFullscreen()
+                    return@onPreviewKeyEvent true
+                }
                 if (showControls && key.action == KeyEvent.ACTION_DOWN) menuInteraction++
                 handleLiveTvRemoteKey(
                     key,
                     controlsVisible = controlsVisible,
-                    onStep = { offset -> viewModel.adjacentChannel(profileId, channelId, offset)?.let(::tune) },
+                    onStep = { offset -> viewModel.adjacentChannel(profileId, channelId, offset)?.let { tune(it) } },
                     onOpenControls = { showControls = true }
                 )
             }
-            .focusable()
-            .pointerInput(Unit) { detectTapGestures { showControls = !showControls } }
+            .focusable(enabled = !guideVisible)
+            .then(if (guideVisible) Modifier else Modifier.pointerInput(Unit) {
+                detectTapGestures { showControls = !showControls }
+            })
     ) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize().focusProperties { canFocus = false },
-            factory = { context ->
-                VLCVideoLayout(context).apply {
-                    keepScreenOn = true
-                    descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                    // Attach both surfaces with the layout so their first frame doesn't depend on
-                    // a later Compose redraw after LibVLC starts.
-                    val video = findViewById<ViewStub>(VlcResources.id.surface_stub).inflate() as SurfaceView
-                    val subtitles = findViewById<ViewStub>(VlcResources.id.subtitles_surface_stub).inflate() as SurfaceView
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                        video.setSurfaceLifecycle(SurfaceView.SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT)
-                        subtitles.setSurfaceLifecycle(SurfaceView.SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT)
+        Box(if (guideVisible) Modifier.liveTvGuidePreview() else Modifier.fillMaxSize()) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize().focusProperties { canFocus = false },
+                factory = { context ->
+                    VLCVideoLayout(context).apply {
+                        keepScreenOn = true
+                        descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                        // Attach both surfaces with the layout so their first frame doesn't depend on
+                        // a later Compose redraw after LibVLC starts.
+                        val video = findViewById<ViewStub>(VlcResources.id.surface_stub).inflate() as SurfaceView
+                        val subtitles = findViewById<ViewStub>(VlcResources.id.subtitles_surface_stub).inflate() as SurfaceView
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                            video.setSurfaceLifecycle(SurfaceView.SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT)
+                            subtitles.setSurfaceLifecycle(SurfaceView.SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT)
+                        }
                     }
-                }
-            },
-            update = { layout = it }
-        )
-        if (playback == VlcPlayback.OPENING) {
-            Text(
-                text = stringResource(R.string.live_tv_vlc_loading),
-                modifier = Modifier.align(Alignment.Center),
-                color = Color.White
+                },
+                update = { layout = it }
             )
+            if (guideVisible) {
+                when (playback) {
+                    VlcPlayback.OPENING -> LiveTvPreviewStatus(R.string.live_tv_vlc_loading)
+                    VlcPlayback.FAILED -> LiveTvPreviewStatus(R.string.live_tv_preview_unavailable)
+                    else -> Unit
+                }
+            } else if (playback == VlcPlayback.OPENING) {
+                Text(
+                    text = stringResource(R.string.live_tv_vlc_loading),
+                    modifier = Modifier.align(Alignment.Center),
+                    color = Color.White
+                )
+            }
         }
         if (controlsVisible) {
             Column(
@@ -260,7 +287,13 @@ internal fun LiveTvVlcScreen(
                             Text(stringResource(R.string.action_retry))
                         }
                     }
-                    Button(onClick = { showPicker = true }, modifier = Modifier.focusRequester(controlsFocus)) {
+                    Button(
+                        onClick = {
+                            showControls = false
+                            showGuide = true
+                        },
+                        modifier = Modifier.focusRequester(controlsFocus)
+                    ) {
                         Text(stringResource(R.string.live_tv_channel_picker))
                     }
                     previous?.let { channel ->
@@ -280,6 +313,13 @@ internal fun LiveTvVlcScreen(
                 }
             }
         }
+        if (guideVisible) {
+            LiveTvPlaybackGuide(
+                state, viewModel, channelId, browseOnOpen,
+                onTune = { channel, list, _ -> tune(channel, list) },
+                onFullscreen = ::showFullscreen,
+                modifier = Modifier.zIndex(4f)
+            )
+        }
     }
-    if (showPicker) LiveTvChannelPicker(viewModel, channelId, ::tune) { showPicker = false }
 }

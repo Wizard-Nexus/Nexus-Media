@@ -69,6 +69,8 @@
     <string name="live_tv_channel_picker">TV Guide</string>
     <string name="live_tv_previous_channel">Previous channel</string>
     <string name="live_tv_current_channel">Watching · %1$s</string>
+    <string name="live_tv_preview_fullscreen">Full screen</string>
+    <string name="live_tv_preview_unavailable">Channel unavailable</string>
     <string name="live_tv_setup_phone">Set up with your phone</string>
     <string name="live_tv_setup_remote">Enter with the remote</string>
     <string name="live_tv_phone_help">Scan with your phone on the same network as this TV.</string>

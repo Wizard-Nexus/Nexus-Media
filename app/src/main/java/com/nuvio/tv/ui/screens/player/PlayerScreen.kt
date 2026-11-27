@@ -16,6 +16,7 @@ import com.nuvio.tv.ui.theme.NuvioTheme
 import com.nuvio.tv.ui.theme.accentBrush
 
 import android.util.Log
+import android.os.Bundle
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
@@ -86,6 +87,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.AbsoluteAlignment
@@ -183,7 +185,9 @@ import com.nuvio.tv.libass.media.widget.AssSubtitleSurfaceView
 import kotlin.math.abs
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.tv.data.livetv.LiveChannel
-import com.nuvio.tv.ui.screens.livetv.LiveTvChannelPicker
+import com.nuvio.tv.ui.screens.livetv.LiveTvPlaybackGuide
+import com.nuvio.tv.ui.screens.livetv.LiveTvPreviewStatus
+import com.nuvio.tv.ui.screens.livetv.liveTvGuidePreview
 import com.nuvio.tv.ui.screens.livetv.LiveTvViewModel
 import com.nuvio.tv.ui.screens.livetv.handleLiveTvRemoteKey
 import kotlinx.coroutines.flow.collectLatest
@@ -218,7 +222,8 @@ internal data class LiveTvPlayerControls(
     val viewModel: LiveTvViewModel,
     val currentId: Long,
     val profileId: Int,
-    val onTune: (LiveChannel, releasePrevious: () -> Unit) -> Boolean
+    val initialGuide: Bundle?,
+    val onTune: (LiveChannel, List<LiveChannel>?, browse: Bundle?, releasePrevious: () -> Unit) -> Boolean
 )
 
 @Composable
@@ -241,19 +246,21 @@ internal fun PlayerScreen(
     val previousChannel = if (liveControlsAvailable && liveTvControls != null) {
         liveState?.history?.previousChannel(liveTvControls.currentId, channelIndex::containsKey)?.let(channelIndex::get)
     } else null
-    var showChannelPicker by remember { mutableStateOf(false) }
-    fun switchChannel(channel: LiveChannel) {
-        if (liveTvControls?.onTune?.invoke(channel, viewModel::stopAndRelease) == true) showChannelPicker = false
+    var showLiveGuide by rememberSaveable { mutableStateOf(liveTvControls?.initialGuide != null) }
+    var browseOnOpen by remember { mutableStateOf(liveTvControls?.initialGuide) }
+    val liveGuideVisible = showLiveGuide && liveControlsAvailable
+
+    fun switchChannel(channel: LiveChannel, list: List<LiveChannel>? = null, browse: Bundle? = null): Boolean =
+        liveTvControls?.onTune?.invoke(channel, list, browse, viewModel::stopAndRelease) == true
+
+    fun showFullscreen() {
+        showLiveGuide = false
+        browseOnOpen = null
     }
     if (liveTvControls != null) {
         LaunchedEffect(viewModel, liveTvControls.profileId, liveTvControls.currentId) {
             viewModel.livePlaybackStarted.filterNotNull().first()
             liveTvControls.viewModel.channelRendered(liveTvControls.profileId, liveTvControls.currentId)
-        }
-        if (showChannelPicker && liveControlsAvailable) {
-            LiveTvChannelPicker(liveTvControls.viewModel, liveTvControls.currentId, ::switchChannel) {
-                showChannelPicker = false
-            }
         }
     }
     val playerBadges = rememberPlayerBadges(viewModel, uiState)
@@ -394,6 +401,10 @@ internal fun PlayerScreen(
     }
 
     val handleBackPress = handleBackPress@{
+        if (liveGuideVisible) {
+            showFullscreen()
+            return@handleBackPress
+        }
         if (externalHandoffInProgress) return@handleBackPress
         if (postPlayRecommendationState.canReturnToPlayer && !uiState.playbackEnded) {
             returnToPlayerFromPostPlay()
@@ -622,8 +633,9 @@ internal fun PlayerScreen(
         (uiState.showSpeedDialog || uiState.showDiscTitlesDialog),
         shouldConfirmNextEpisodeOnEnd,
         postPlayRecommendationState.isVisible,
+        liveGuideVisible
     ) {
-        if (shouldConfirmNextEpisodeOnEnd || postPlayRecommendationState.isVisible) return@LaunchedEffect
+        if (liveGuideVisible || shouldConfirmNextEpisodeOnEnd || postPlayRecommendationState.isVisible) return@LaunchedEffect
         if (uiState.error != null) return@LaunchedEffect
         if (uiState.showPartyPanel) return@LaunchedEffect
         if (uiState.showControls && !uiState.showEpisodesPanel && !uiState.showSourcesPanel && !uiState.showChaptersPanel &&
@@ -656,7 +668,7 @@ internal fun PlayerScreen(
 
     // Initial focus on container - the LaunchedEffect above will handle focusing controls
     LaunchedEffect(Unit) {
-        if (uiState.error == null) {
+        if (uiState.error == null && !liveGuideVisible) {
             containerFocusRequester.requestFocus()
         }
     }
@@ -713,8 +725,12 @@ internal fun PlayerScreen(
             .fillMaxSize()
             .then(if (transparentLetterbox) Modifier else Modifier.background(Color.Black))
             .focusRequester(containerFocusRequester)
-            .focusable(enabled = uiState.error == null)
+            .focusable(enabled = uiState.error == null && !liveGuideVisible)
             .onPreviewKeyEvent { keyEvent ->
+                val previewKey = keyEvent.nativeKeyEvent.keyCode
+                if (liveGuideVisible && previewKey != KeyEvent.KEYCODE_BACK && previewKey != KeyEvent.KEYCODE_ESCAPE) {
+                    return@onPreviewKeyEvent false
+                }
                 // Consume the confirm KEY_UP that opened the subtitle timing dialog before
                 // the newly focused "Sync" button can treat it as a second click. Preview
                 // is required: after open, focus moves into the dialog so onKeyEvent on
@@ -745,7 +761,7 @@ internal fun PlayerScreen(
                     }
                 }
 
-                if (liveTvControls != null && !panelOrDialogOpen && !showChannelPicker &&
+                if (liveTvControls != null && !panelOrDialogOpen && !liveGuideVisible &&
                     !uiState.showStreamInfoOverlay &&
                     handleLiveTvRemoteKey(
                         event = keyEvent.nativeKeyEvent,
@@ -753,7 +769,7 @@ internal fun PlayerScreen(
                         onStep = { offset ->
                             liveTvControls.viewModel.adjacentChannel(
                                 liveTvControls.profileId, liveTvControls.currentId, offset
-                            )?.let(::switchChannel)
+                            )?.let { switchChannel(it) }
                         },
                         onOpenControls = {
                             if (uiState.showPauseOverlay) viewModel.onEvent(PlayerEvent.OnDismissPauseOverlay)
@@ -805,6 +821,7 @@ internal fun PlayerScreen(
                 true
             }
             .onKeyEvent { keyEvent ->
+                if (liveGuideVisible) return@onKeyEvent false
                 // KEY_UP confirm for Sync Line is consumed in onPreviewKeyEvent so it still
                 // runs after focus moves into the timing dialog.
                 if (uiState.showSubtitleDelayOverlay) {
@@ -916,7 +933,7 @@ internal fun PlayerScreen(
                 }
 
                 // When a side panel or dialog is open, let it handle all keys.
-                if (panelOrDialogOpen || showChannelPicker) return@onKeyEvent false
+                if (panelOrDialogOpen) return@onKeyEvent false
 
                 if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_UP) {
                     when (keyEvent.nativeKeyEvent.keyCode) {
@@ -1111,7 +1128,7 @@ internal fun PlayerScreen(
             label = "postPlayRecommendationPlayerBorderAlpha"
         )
         val playerSurfaceShape = RoundedCornerShape(postPlayRecommendationPlayerCornerRadius)
-        val playerSurfaceIsFullscreen = !postPlayRecommendationState.isVisible &&
+        val playerSurfaceIsFullscreen = !liveGuideVisible && !postPlayRecommendationState.isVisible &&
             postPlayRecommendationPlayerWidth >= 0.999f
         var subtitleControlsClearancePx by remember { mutableFloatStateOf(0f) }
         var progressBarSubtitleClearancePx by remember { mutableFloatStateOf(0f) }
@@ -1145,7 +1162,7 @@ internal fun PlayerScreen(
             !uiState.showSubtitleDelayOverlay && !uiState.showSubtitleTimingDialog &&
             !uiState.showMoreDialog &&
             !uiState.isLive
-        val playerControlsVisible = uiState.showControls && uiState.error == null &&
+        val playerControlsVisible = !liveGuideVisible && uiState.showControls && uiState.error == null &&
             !uiState.showLoadingOverlay && !uiState.showPauseOverlay &&
             !uiState.showStreamInfoOverlay &&
             !uiState.showSubtitleStylePanel &&
@@ -1167,8 +1184,9 @@ internal fun PlayerScreen(
             }
         }
         val fallbackSubtitleLiftPx = with(LocalDensity.current) { SUBTITLE_CONTROLS_LIFT.toPx() }
-        val playerSurfaceModifier = Modifier
-            .align(Alignment.TopEnd)
+        val playerSurfaceModifier = if (liveGuideVisible) {
+            Modifier.liveTvGuidePreview()
+        } else Modifier.align(Alignment.TopEnd)
             .padding(end = postPlayRecommendationPlayerPadding, top = postPlayRecommendationPlayerPadding)
             .fillMaxWidth(postPlayRecommendationPlayerWidth)
             .aspectRatio(16f / 9f)
@@ -1362,6 +1380,13 @@ internal fun PlayerScreen(
                     )
                 }
 
+                if (liveGuideVisible) {
+                    when {
+                        uiState.error != null -> LiveTvPreviewStatus(R.string.live_tv_preview_unavailable)
+                        uiState.showLoadingOverlay || uiState.isBuffering -> LiveTvPreviewStatus(R.string.live_tv_vlc_loading)
+                    }
+                }
+
                 if (postPlayRecommendationState.canReturnToPlayer) {
                     PostPlayRecommendationPlayerWindow(
                         focusRequester = postPlayRecommendationPlayerWindowFocusRequester,
@@ -1531,7 +1556,7 @@ internal fun PlayerScreen(
         )
 
         // Error state
-        if (uiState.error != null) {
+        if (uiState.error != null && !liveGuideVisible) {
             ErrorOverlay(
                 message = uiState.error!!,
                 showSwitchToMpvAction = uiState.showSwitchToMpvErrorAction &&
@@ -1725,7 +1750,10 @@ internal fun PlayerScreen(
                 onShowEpisodesPanel = { viewModel.onEvent(PlayerEvent.OnShowEpisodesPanel) },
                 onShowSourcesPanel = { viewModel.onEvent(PlayerEvent.OnShowSourcesPanel) },
                 onShowChannelPicker = if (liveControlsAvailable) {
-                    { showChannelPicker = true }
+                    {
+                        viewModel.hideControls()
+                        showLiveGuide = true
+                    }
                 } else null,
                 onPreviousChannel = previousChannel?.let { channel -> { switchChannel(channel) } },
                 onShowPartyPanel = if (partyAvailable && viewModel.canUseParty) {
@@ -2273,6 +2301,18 @@ internal fun PlayerScreen(
                 onSpeedSelected = { viewModel.onEvent(PlayerEvent.OnSetPlaybackSpeed(it)) },
                 onDismiss = { viewModel.onEvent(PlayerEvent.OnDismissTransientOverlay) },
                 brightness = uiState.playerControlsBrightness
+            )
+        }
+
+        if (liveGuideVisible && liveState != null && liveTvControls != null) {
+            LiveTvPlaybackGuide(
+                state = liveState,
+                viewModel = liveTvControls.viewModel,
+                currentId = liveTvControls.currentId,
+                initialBrowse = browseOnOpen,
+                onTune = ::switchChannel,
+                onFullscreen = ::showFullscreen,
+                modifier = Modifier.zIndex(4f)
             )
         }
     }

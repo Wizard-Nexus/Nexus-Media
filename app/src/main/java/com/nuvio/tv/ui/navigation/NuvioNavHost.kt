@@ -24,6 +24,7 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import android.os.Bundle
 import android.os.SystemClock
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -51,6 +52,7 @@ import com.nuvio.tv.ui.screens.library.LibraryScreen
 import com.nuvio.tv.data.livetv.LiveChannel
 import com.nuvio.tv.data.livetv.LiveTvPlayer
 import com.nuvio.tv.ui.screens.livetv.LiveTvHomeShortcuts
+import com.nuvio.tv.ui.screens.livetv.LIVE_TV_GUIDE_STATE
 import com.nuvio.tv.ui.screens.livetv.LiveTvScreen
 import com.nuvio.tv.ui.screens.livetv.LiveTvVlcScreen
 import com.nuvio.tv.ui.screens.livetv.rememberLiveTvHomeShortcutsVisible
@@ -133,6 +135,7 @@ private fun PlaybackNavHost(
         channel: LiveChannel,
         fromRoute: String,
         channelList: List<LiveChannel>? = null,
+        guide: Bundle? = null,
         releasePrevious: (() -> Unit)? = null
     ): Boolean {
         val origin = navController.currentBackStackEntry ?: return false
@@ -157,6 +160,7 @@ private fun PlaybackNavHost(
         navController.navigate(route) {
             if (releasePrevious != null) popUpTo(origin.destination.id) { inclusive = true }
         }
+        if (guide != null) navController.currentBackStackEntry?.savedStateHandle?.set(LIVE_TV_GUIDE_STATE, guide)
         return true
     }
 
@@ -1020,9 +1024,10 @@ private fun PlaybackNavHost(
                         viewModel = liveTv,
                         currentId = liveChannelId,
                         profileId = liveProfileId,
-                        onTune = { channel, release ->
+                        initialGuide = backStackEntry.savedStateHandle.get<Bundle>(LIVE_TV_GUIDE_STATE),
+                        onTune = { channel, list, guide, release ->
                             if (navController.currentBackStackEntry != backStackEntry) false
-                            else playLiveChannel(channel, Screen.Player.route, releasePrevious = release)
+                            else playLiveChannel(channel, Screen.Player.route, list, guide, release)
                         }
                     )
                 } else null,
@@ -1353,7 +1358,7 @@ private fun PlaybackNavHost(
         rootComposable(Screen.LiveTv.route) {
             LiveTvScreen(
                 viewModel = liveTv,
-                onPlay = { channel, list -> playLiveChannel(channel, Screen.LiveTv.route, list) },
+                onPlay = { channel, list, guide -> playLiveChannel(channel, Screen.LiveTv.route, list, guide) },
                 onOpenSettings = {
                     navController.navigate(Screen.Settings.route)
                     navController.currentBackStackEntry?.savedStateHandle?.set("openLiveTvSettings", true)
@@ -1373,6 +1378,7 @@ private fun PlaybackNavHost(
                 viewModel = liveTv,
                 profileId = args.getInt("profileId"),
                 initialChannelId = args.getLong("channelId"),
+                initialBrowse = entry.savedStateHandle.get<Bundle>(LIVE_TV_GUIDE_STATE),
                 onExit = {
                     if (navController.currentBackStackEntry == entry) navController.popBackStack()
                 }

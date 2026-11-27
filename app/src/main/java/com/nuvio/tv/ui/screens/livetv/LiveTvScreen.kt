@@ -1,5 +1,7 @@
 package com.nuvio.tv.ui.screens.livetv
 
+import android.os.Bundle
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -45,8 +47,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
@@ -71,12 +71,14 @@ private enum class LiveTvSection(val label: Int) {
     SPORTS(R.string.live_tv_sports)
 }
 
+internal const val LIVE_TV_GUIDE_STATE = "liveTvGuideState"
+
 private val GuideSections = listOf(LiveTvSection.FAVOURITES, LiveTvSection.ALL, LiveTvSection.RECENT, LiveTvSection.SPORTS)
 
 @Composable
 internal fun LiveTvScreen(
     viewModel: LiveTvViewModel,
-    onPlay: (LiveChannel, List<LiveChannel>) -> Boolean,
+    onPlay: (LiveChannel, List<LiveChannel>, Bundle) -> Boolean,
     onOpenSettings: () -> Unit
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -95,26 +97,32 @@ internal fun LiveTvScreen(
 }
 
 @Composable
-internal fun LiveTvChannelPicker(
+internal fun LiveTvPlaybackGuide(
+    state: LiveTvState,
     viewModel: LiveTvViewModel,
     currentId: Long,
-    onPlay: (LiveChannel) -> Unit,
-    onDismiss: () -> Unit
+    initialBrowse: Bundle?,
+    onTune: (LiveChannel, List<LiveChannel>, Bundle) -> Boolean,
+    onFullscreen: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
     val firstFocus = remember { FocusRequester() }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        key(state.profileId, state.sourceKey, currentId) {
-            LiveTvGuideContent(
-                state, viewModel, firstFocus,
-                onPlay = { channel, _ ->
-                    if (channel.id == currentId) onDismiss() else onPlay(channel)
+    key(state.profileId, state.sourceKey) {
+        LiveTvGuideContent(
+            state, viewModel, firstFocus,
+            onPlay = { channel, list, browse ->
+                if (channel.id == currentId) {
+                    onFullscreen()
                     true
-                },
-                initialChannelId = currentId,
-                onDismiss = onDismiss
-            )
-        }
+                } else {
+                    onTune(channel, list, browse)
+                }
+            },
+            playingId = currentId,
+            initialBrowse = initialBrowse,
+            onDismiss = onFullscreen,
+            modifier = modifier
+        )
     }
 }
 
@@ -145,24 +153,30 @@ private fun LiveTvGuideContent(
     state: LiveTvState,
     viewModel: LiveTvViewModel,
     firstFocus: FocusRequester,
-    onPlay: (LiveChannel, List<LiveChannel>) -> Boolean,
-    initialChannelId: Long? = null,
-    onDismiss: (() -> Unit)? = null
+    onPlay: (LiveChannel, List<LiveChannel>, Bundle) -> Boolean,
+    playingId: Long? = null,
+    initialBrowse: Bundle? = null,
+    onDismiss: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
 ) {
     val channels = state.catalog?.channels.orEmpty()
     val channelIndex = remember(channels) { channels.associateBy { it.id } }
     val groups = remember(channels) { channels.mapNotNull { it.group }.distinct() }
     val sports = remember(channels) { channels.filter { it.isSports } }
     val favouriteIds = remember(state.history.favourites) { state.history.favourites.toHashSet() }
-    var section by rememberSaveable { mutableStateOf(LiveTvSection.ALL) }
-    var group by rememberSaveable { mutableStateOf(channelIndex[initialChannelId]?.group) }
-    var query by rememberSaveable { mutableStateOf("") }
+    var section by rememberSaveable {
+        mutableStateOf(LiveTvSection.entries.firstOrNull { it.name == initialBrowse?.getString("section") } ?: LiveTvSection.ALL)
+    }
+    var group by rememberSaveable {
+        mutableStateOf(if (initialBrowse != null) initialBrowse.getString("group") else channelIndex[playingId]?.group)
+    }
+    var query by rememberSaveable { mutableStateOf(initialBrowse?.getString("query").orEmpty()) }
     var searching by remember { mutableStateOf(false) }
     var eventDetails by remember { mutableStateOf<LiveSportsEvent?>(null) }
-    var categoriesVisible by rememberSaveable { mutableStateOf(initialChannelId == null) }
+    var categoriesVisible by rememberSaveable { mutableStateOf(initialBrowse?.getBoolean("categories") ?: (playingId == null)) }
     var restorePlaybackFocus by rememberSaveable { mutableStateOf(false) }
     var placedFocus by remember { mutableStateOf(false) }
-    val restoreId = remember { initialChannelId ?: state.lastTunedChannelId.takeIf { restorePlaybackFocus } }
+    val restoreId = remember { playingId ?: state.lastTunedChannelId.takeIf { restorePlaybackFocus } }
 
     val items = remember(channels, channelIndex, sports, section, group, query, state.history) {
         val filtered = when {
@@ -180,8 +194,8 @@ private fun LiveTvGuideContent(
     val rowFocus = remember { FocusRequester() }
     var railFocusRequest by remember { mutableIntStateOf(0) }
     var highlightedId by remember { mutableStateOf(restoreId) }
-    var browsingTime by rememberSaveable { mutableLongStateOf(0L) }
-    var windowAnchor by rememberSaveable { mutableLongStateOf(0L) }
+    var browsingTime by rememberSaveable { mutableLongStateOf(initialBrowse?.getLong("time") ?: 0L) }
+    var windowAnchor by rememberSaveable { mutableLongStateOf(initialBrowse?.getLong("anchor") ?: 0L) }
     val now = liveGuideClock()
     val targetRow = highlightedId?.let { highlighted -> items.firstOrNull { it.id == highlighted } } ?: items.firstOrNull()
     val programmeTime = browsingTime.takeIf { it != 0L } ?: now
@@ -206,11 +220,21 @@ private fun LiveTvGuideContent(
     }
 
     fun play(channel: LiveChannel) {
-        if (onPlay(channel, items)) restorePlaybackFocus = true
+        val browse = Bundle().apply {
+            putString("section", section.name)
+            putString("group", group)
+            putString("query", query)
+            putBoolean("categories", categoriesVisible)
+            putLong("time", browsingTime)
+            putLong("anchor", windowAnchor)
+        }
+        if (onPlay(channel, if (items.any { it.id == channel.id }) items else listOf(channel), browse)) {
+            restorePlaybackFocus = true
+        }
     }
 
     fun select(channel: LiveChannel, programme: LiveProgramme?) {
-        if (programme == null || programme.isOnAir(now)) {
+        if (playingId != null || programme == null || programme.isOnAir(now)) {
             play(channel)
         } else {
             eventDetails = LiveSportsEvent(channel, programme)
@@ -271,10 +295,11 @@ private fun LiveTvGuideContent(
     val featured = remember(showSports, sports, state.guide, now) {
         if (showSports) featuredSportsEvents(sports, state.guide, now, 6) else emptyList()
     }
-    BackHandler(!categoriesVisible && !searching && eventDetails == null) { showCategories() }
+    BackHandler(playingId == null && !categoriesVisible && !searching && eventDetails == null) { showCategories() }
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(GuideRail)) {
-        val detailsHeight = maxHeight * .405f
+    BoxWithConstraints(modifier.fillMaxSize().background(GuideRail)) {
+        val detailsHeight = maxHeight * GUIDE_HEADER_SHARE
+        val previewSize = if (playingId == null) null else guidePreviewSize(maxWidth, maxHeight)
         val railWidth = maxWidth * .244f
         val channelWidth = (maxWidth * .273f).coerceAtMost(272.dp)
         val timelineWidth = (maxWidth - channelWidth - if (categoriesVisible) railWidth else 0.dp).coerceAtLeast(1.dp)
@@ -315,6 +340,8 @@ private fun LiveTvGuideContent(
                 onLater = { page(true) },
                 onCategories = ::showCategories,
                 onWatch = highlighted?.let { channel -> { play(channel) } },
+                previewSize = previewSize,
+                playingChannel = channelIndex[playingId],
                 onDismiss = onDismiss,
                 modifier = Modifier.height(detailsHeight)
             ) {

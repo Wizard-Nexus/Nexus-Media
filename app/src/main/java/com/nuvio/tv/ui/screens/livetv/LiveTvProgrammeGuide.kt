@@ -48,6 +48,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Border
@@ -128,34 +129,50 @@ internal fun LiveTvGuideHeader(
     onLater: () -> Unit,
     onCategories: () -> Unit,
     onWatch: (() -> Unit)?,
+    previewSize: DpSize?,
+    playingChannel: LiveChannel?,
     onDismiss: (() -> Unit)?,
     modifier: Modifier = Modifier,
     extra: @Composable () -> Unit = {}
 ) {
     Row(
         modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(GuideBlack, Color(0xFF10182B))))
-            .padding(start = 24.dp, top = 12.dp, end = 22.dp, bottom = 14.dp),
-        horizontalArrangement = Arrangement.spacedBy(23.dp),
+            .padding(start = GuideHeaderStart, top = GuideHeaderTop, end = GuideHeaderEnd, bottom = 14.dp),
+        horizontalArrangement = Arrangement.spacedBy(GuideHeaderGap),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(Modifier.weight(.33f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                stringResource(R.string.nav_live_tv),
-                color = GuideAccent,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold
-            )
-            if (channel != null) {
-                ChannelLogo(channel, Modifier.size(90.dp, 50.dp))
-                if (onWatch != null) {
-                    GuideButton(stringResource(R.string.live_tv_watch_channel), onWatch)
+        Column(
+            Modifier.weight(GUIDE_PREVIEW_WEIGHT).then(if (previewSize != null) Modifier.align(Alignment.Top) else Modifier),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (previewSize != null) {
+                Spacer(Modifier.size(previewSize).background(Color.Black))
+                playingChannel?.let {
+                    Text(
+                        stringResource(R.string.live_tv_current_channel, it.name),
+                        color = GuideAccent,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             } else {
-                Text(stringResource(R.string.live_tv_guide), color = GuideText, style = MaterialTheme.typography.headlineMedium)
+                Text(
+                    stringResource(R.string.nav_live_tv),
+                    color = GuideAccent,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                if (channel != null) {
+                    ChannelLogo(channel, Modifier.size(90.dp, 50.dp))
+                    if (onWatch != null) GuideButton(stringResource(R.string.live_tv_watch_channel), onWatch)
+                } else {
+                    Text(stringResource(R.string.live_tv_guide), color = GuideText, style = MaterialTheme.typography.headlineMedium)
+                }
             }
         }
         Column(
-            Modifier.weight(.67f).fillMaxHeight(),
+            Modifier.weight(1f - GUIDE_PREVIEW_WEIGHT).fillMaxHeight(),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Row(
@@ -168,7 +185,7 @@ internal fun LiveTvGuideHeader(
                 GuideButton(stringResource(R.string.live_tv_now), onNow)
                 GuideButton("›", onLater, enabled = canGoLater, description = stringResource(R.string.live_tv_guide_later))
                 GuideButton(stringResource(R.string.live_tv_search), onSearch)
-                if (onDismiss != null) GuideButton(stringResource(R.string.action_close), onDismiss)
+                if (onDismiss != null) GuideButton(stringResource(R.string.live_tv_preview_fullscreen), onDismiss)
             }
             Spacer(Modifier.height(4.dp))
             val dateLabel = remember(date) {
