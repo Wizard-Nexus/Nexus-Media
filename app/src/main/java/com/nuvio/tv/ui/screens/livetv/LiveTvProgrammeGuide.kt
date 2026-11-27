@@ -81,6 +81,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 internal const val GUIDE_STEP_MS = 30 * 60_000L
+private const val GUIDE_CHANNEL_SUMMARY_WEIGHT = .33f
 
 private val GuideBlack = Color(0xFF090B11)
 internal val GuideRail = Color(0xFF0D1018)
@@ -168,26 +169,26 @@ internal fun LiveTvGuideHeader(
         modifier.fillMaxWidth().background(
             Brush.horizontalGradient(listOf(GuideBlack, lerp(GuideRail, LocalGuidePalette.current.secondary, 0.1f)))
         )
-            .padding(start = GuideHeaderStart, top = GuideHeaderTop, end = GuideHeaderEnd, bottom = 14.dp),
+            .padding(
+                start = GuideHeaderStart,
+                top = GuideHeaderTop,
+                end = GuideHeaderEnd,
+                bottom = if (previewSize != null) GuidePreviewBottom else 14.dp
+            ),
         horizontalArrangement = Arrangement.spacedBy(GuideHeaderGap),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(
-            Modifier.weight(GUIDE_PREVIEW_WEIGHT).then(if (previewSize != null) Modifier.align(Alignment.Top) else Modifier),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            if (previewSize != null) {
-                Spacer(Modifier.size(previewSize).background(Color.Black))
-                playingChannel?.let {
-                    Text(
-                        stringResource(R.string.live_tv_current_channel, it.name),
-                        color = GuideAccent,
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            } else {
+        if (previewSize != null) {
+            val description = playingChannel?.let { stringResource(R.string.live_tv_current_channel, it.name) }
+            Spacer(
+                Modifier.align(Alignment.Top).size(previewSize).background(Color.Black)
+                    .semantics { if (description != null) contentDescription = description }
+            )
+        } else {
+            Column(
+                Modifier.weight(GUIDE_CHANNEL_SUMMARY_WEIGHT),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 Text(
                     stringResource(R.string.nav_live_tv),
                     color = GuideAccent,
@@ -203,7 +204,7 @@ internal fun LiveTvGuideHeader(
             }
         }
         Column(
-            Modifier.weight(1f - GUIDE_PREVIEW_WEIGHT).fillMaxHeight(),
+            Modifier.weight(1f - GUIDE_CHANNEL_SUMMARY_WEIGHT).fillMaxHeight(),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             FlowRow(

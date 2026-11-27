@@ -44,11 +44,12 @@ internal val GuideHeaderStart = 24.dp
 internal val GuideHeaderEnd = 22.dp
 internal val GuideHeaderTop = 12.dp
 internal val GuideHeaderGap = 23.dp
-internal const val GUIDE_PREVIEW_WEIGHT = .33f
+internal val GuidePreviewBottom = 8.dp
+private const val GUIDE_PREVIEW_MAX_WIDTH_SHARE = .41f
 
 internal fun guidePreviewSize(width: Dp, height: Dp): DpSize {
-    val availableWidth = (width - GuideHeaderStart - GuideHeaderEnd - GuideHeaderGap) * GUIDE_PREVIEW_WEIGHT
-    val availableHeight = (height * GUIDE_HEADER_SHARE - 48.dp).coerceAtLeast(1.dp)
+    val availableWidth = (width - GuideHeaderStart - GuideHeaderEnd - GuideHeaderGap) * GUIDE_PREVIEW_MAX_WIDTH_SHARE
+    val availableHeight = (height * GUIDE_HEADER_SHARE - GuideHeaderTop - GuidePreviewBottom).coerceAtLeast(1.dp)
     val videoWidth = minOf(availableWidth, availableHeight * (16f / 9f)).coerceAtLeast(1.dp)
     return DpSize(videoWidth, videoWidth * (9f / 16f))
 }
