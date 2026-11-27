@@ -39,6 +39,7 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.core.qr.QrCodeGenerator
 import com.nuvio.tv.data.livetv.LiveTvPlayer
+import com.nuvio.tv.data.livetv.groupNames
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.screens.account.InputField
 import com.nuvio.tv.ui.screens.livetv.LiveTvViewModel
@@ -55,6 +56,8 @@ internal fun LiveTvSettingsContent(viewModel: LiveTvViewModel, initialFocusReque
     key(state.profileId) {
         var showPlayers by remember { mutableStateOf(false) }
         var connecting by remember { mutableStateOf(false) }
+        var showCategories by remember(state.sourceKey) { mutableStateOf(false) }
+        val categories = remember(state.catalog) { state.catalog?.groupNames().orEmpty() }
         val playerTitle = stringResource(R.string.live_tv_player)
         val playerHelp = stringResource(R.string.live_tv_player_help)
         val players = listOf(
@@ -74,6 +77,16 @@ internal fun LiveTvSettingsContent(viewModel: LiveTvViewModel, initialFocusReque
                     onClick = { showPlayers = true },
                     modifier = initialFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier
                 )
+            }
+            if (categories.isNotEmpty()) {
+                SettingsGroupCard {
+                    SettingsActionRow(
+                        title = stringResource(R.string.live_tv_manage_groups),
+                        subtitle = stringResource(R.string.live_tv_manage_groups_summary),
+                        enabled = !state.loading,
+                        onClick = { showCategories = true }
+                    )
+                }
             }
             SettingsGroupCard(
                 title = stringResource(R.string.live_tv_playlist),
@@ -121,6 +134,14 @@ internal fun LiveTvSettingsContent(viewModel: LiveTvViewModel, initialFocusReque
                     showPlayers = false
                 },
                 onDismiss = { showPlayers = false }
+            )
+        }
+        if (showCategories && categories.isNotEmpty()) {
+            LiveTvCategoriesDialog(
+                providerOrder = categories,
+                preferences = state.categories,
+                onUpdate = { viewModel.updateCategories(state.sourceKey, it) },
+                onDismiss = { showCategories = false }
             )
         }
         if (connecting) {

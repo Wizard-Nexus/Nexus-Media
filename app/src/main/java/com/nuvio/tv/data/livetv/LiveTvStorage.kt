@@ -95,6 +95,17 @@ internal class LiveTvStorage @Inject constructor(@ApplicationContext context: Co
         history.edit().putString(historyKey(profileId, source), json.encodeToString(state)).apply()
     }
 
+    fun readCategories(profileId: Int, source: XtreamSource): LiveTvCategories = runCatching {
+        history.getString("${historyKey(profileId, source)}.categories", null)
+            ?.let { json.decodeFromString<LiveTvCategories>(it) }
+    }.getOrNull() ?: LiveTvCategories()
+
+    fun writeCategories(profileId: Int, source: XtreamSource, categories: LiveTvCategories) {
+        history.edit()
+            .putString("${historyKey(profileId, source)}.categories", json.encodeToString(categories))
+            .apply()
+    }
+
     override fun removeProfile(profileId: Int) {
         writeSource(profileId, null)
         clearCatalog(profileId)

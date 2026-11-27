@@ -116,7 +116,7 @@ internal fun LiveTvEventDialog(event: LiveSportsEvent, onWatch: () -> Unit, onDi
 @Composable
 internal fun rememberLiveTvHomeShortcutsVisible(viewModel: LiveTvViewModel): Boolean {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val channels = state.catalog?.channels.orEmpty()
+    val channels = remember(state.catalog, state.categories.hidden) { state.visibleChannels() }
     if (channels.isEmpty()) return false
     val now = liveGuideClock()
     val favouriteIds = state.history.favourites
@@ -133,7 +133,7 @@ internal fun LiveTvHomeShortcuts(
     onPlay: (LiveChannel, List<LiveChannel>) -> Boolean
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val channels = state.catalog?.channels.orEmpty()
+    val channels = remember(state.catalog, state.categories.hidden) { state.visibleChannels() }
     if (channels.isEmpty()) return
     val now = liveGuideClock()
     val channelsById = remember(channels) { channels.associateBy { it.id } }

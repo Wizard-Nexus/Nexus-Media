@@ -7,6 +7,7 @@ import android.util.TypedValue
 import android.view.SurfaceHolder
 import com.nuvio.tv.data.local.MpvHardwareDecodeMode
 import com.nuvio.tv.data.local.SubtitleStyleSettings
+import com.nuvio.tv.ui.screens.livetv.LiveTvSeekWindow
 import `is`.xyz.mpv.MPV
 import `is`.xyz.mpv.MPVNode
 import `is`.xyz.mpv.Utils
@@ -313,6 +314,26 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         if (!initialized) return 0L
         val seconds = mpv.getPropertyDouble("duration/full") ?: 0.0
         return (seconds * 1000.0).roundToLong().coerceAtLeast(0L)
+    }
+
+    internal fun cachedLiveTvWindow(): LiveTvSeekWindow? {
+        if (!initialized || !isPositionFromRequestedMedia()) return null
+        val ranges = mpv.getPropertyNode("demuxer-cache-state")?.asMap()
+            ?.get("seekable-ranges")?.asArray().orEmpty()
+        val offset = if (mpv.getPropertyBoolean("rebase-start-time") == true) {
+            mpv.getPropertyDouble("demuxer-start-time") ?: 0.0
+        } else 0.0
+        val position = currentPositionMs()
+        return ranges.firstNotNullOfOrNull { range ->
+            val data = range.asMap() ?: return@firstNotNullOfOrNull null
+            val start = data["start"]?.asDouble()?.takeIf(Double::isFinite) ?: return@firstNotNullOfOrNull null
+            val end = data["end"]?.asDouble()?.takeIf(Double::isFinite) ?: return@firstNotNullOfOrNull null
+            val startMs = ((start - offset) * 1_000).roundToLong().coerceAtLeast(0L)
+            val edgeMs = ((end - offset) * 1_000).roundToLong() - 1_000L
+            if (edgeMs > startMs && position in startMs..(edgeMs + 2_000L)) {
+                LiveTvSeekWindow(startMs, edgeMs, position)
+            } else null
+        }
     }
 
     /** Live HLS/DASH in mpv is typically reported as not seekable. VOD HLS is seekable. */

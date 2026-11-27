@@ -80,7 +80,8 @@ internal data class LiveChannel(
 internal data class XtreamCatalog(
     val channels: List<LiveChannel>,
     val format: String,
-    val timezone: String? = null
+    val timezone: String? = null,
+    val categoryOrder: List<String> = emptyList()
 )
 
 internal enum class XtreamProblem { SIGN_IN, NO_CHANNELS, RESPONSE }
@@ -118,7 +119,7 @@ internal class XtreamClient(
         }.distinctBy { it.id }
         if (channels.isEmpty()) throw XtreamException(XtreamProblem.NO_CHANNELS)
         val timezone = (received["server_info"] as? JsonObject)?.field("timezone")
-        return XtreamCatalog(channels, format, timezone)
+        return XtreamCatalog(channels, format, timezone, groups.values.distinct())
     }
 
     fun guide(source: XtreamSource, streamId: Long, timezone: String?, full: Boolean = false): List<LiveProgramme> {

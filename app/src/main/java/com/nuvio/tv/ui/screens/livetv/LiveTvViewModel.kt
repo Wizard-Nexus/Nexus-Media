@@ -11,6 +11,7 @@ import com.nuvio.tv.core.server.DeviceIpAddress
 import com.nuvio.tv.core.server.XtreamPhoneSetupServer
 import com.nuvio.tv.data.livetv.LiveChannel
 import com.nuvio.tv.data.livetv.LiveProgramme
+import com.nuvio.tv.data.livetv.LiveTvCategories
 import com.nuvio.tv.data.livetv.LiveTvHistory
 import com.nuvio.tv.data.livetv.LiveTvPlayer
 import com.nuvio.tv.data.livetv.LiveTvStorage
@@ -47,10 +48,16 @@ internal data class LiveTvState(
     val hasSource: Boolean = false,
     val loading: Boolean = true,
     val history: LiveTvHistory = LiveTvHistory(),
+    val categories: LiveTvCategories = LiveTvCategories(),
     val lastTunedChannelId: Long? = null,
     val guide: Map<Long, List<LiveProgramme>> = emptyMap(),
     @StringRes val error: Int? = null
-)
+) {
+    fun visibleChannels(): List<LiveChannel> {
+        val channels = catalog?.channels.orEmpty()
+        return if (categories.hidden.isEmpty()) channels else channels.filterNot { it.group in categories.hidden }
+    }
+}
 
 internal data class XtreamPhoneSetupState(
     val url: String? = null,
@@ -108,26 +115,23 @@ internal class LiveTvViewModel @Inject constructor(
         profile = active
         _state.value = LiveTvState(id)
         scope.launch {
-            val (player, saved) = withContext(Dispatchers.IO) {
+            val (source, saved) = withContext(Dispatchers.IO) {
                 val source = storage.readSource(id)
-                storage.readPlayer(id) to Triple(
-                    source,
-                    source?.let { storage.readCatalog(id, it) },
-                    source?.let { storage.readHistory(id, it) }
+                source to LiveTvState(
+                    profileId = id,
+                    player = storage.readPlayer(id),
+                    catalog = source?.let { storage.readCatalog(id, it) },
+                    sourceKey = source?.cacheKey,
+                    history = source?.let { storage.readHistory(id, it) } ?: LiveTvHistory(),
+                    categories = source?.let { storage.readCategories(id, it) } ?: LiveTvCategories(),
+                    hasSource = source != null,
+                    loading = false
                 )
             }
             if (profile !== active) return@launch
-            active.source = saved.first
+            active.source = source
             active.ready = true
-            _state.value = LiveTvState(
-                profileId = id,
-                player = player,
-                catalog = saved.second,
-                sourceKey = saved.first?.cacheKey,
-                history = saved.third ?: LiveTvHistory(),
-                hasSource = saved.first != null,
-                loading = false
-            )
+            _state.value = saved
             if (liveTvVisible) refreshIfStale()
         }
     }
@@ -168,6 +172,17 @@ internal class LiveTvViewModel @Inject constructor(
         _state.update { it.copy(player = player) }
     }
 
+    fun updateCategories(sourceKey: String?, update: (LiveTvCategories) -> LiveTvCategories) {
+        val active = currentProfile() ?: return
+        val source = active.source?.takeIf { it.cacheKey == sourceKey } ?: return
+        if (_state.value.loading) return
+        val previous = _state.value.categories
+        val changed = update(previous)
+        if (previous == changed) return
+        storage.writeCategories(active.id, source, changed)
+        _state.update { it.copy(categories = changed) }
+    }
+
     fun clearError() = _state.update { it.copy(error = null) }
 
     fun disconnect() {
@@ -190,13 +205,14 @@ internal class LiveTvViewModel @Inject constructor(
 
     fun tune(channel: LiveChannel, channelList: List<LiveChannel>? = null): String? {
         val active = currentProfile() ?: return null
+        if (channel.group in _state.value.categories.hidden) return null
         val url = streamUrl(active.id, channel.id) ?: return null
         if (channelList != null) {
             active.tuningOrder = channelList.map { it.id }
         } else if (active.tuningOrder?.contains(channel.id) != true) {
             // A manual pick outside the current list starts tuning in the new channel's group.
-            active.tuningOrder = _state.value.catalog?.channels
-                ?.filter { it.group == channel.group }?.map { it.id }
+            active.tuningOrder = _state.value.visibleChannels()
+                .filter { it.group == channel.group }.map { it.id }
         }
         _state.update { it.copy(lastTunedChannelId = channel.id) }
         return url
@@ -211,7 +227,7 @@ internal class LiveTvViewModel @Inject constructor(
 
     fun adjacentChannel(profileId: Int, currentId: Long, offset: Int): LiveChannel? {
         val active = currentProfile()?.takeIf { it.id == profileId } ?: return null
-        val channels = _state.value.catalog?.channels ?: return null
+        val channels = _state.value.visibleChannels()
         val index = channels.associateBy { it.id }
         val current = index[currentId] ?: return null
         val order = active.tuningOrder?.mapNotNull(index::get) ?: channels.filter { it.group == current.group }
@@ -368,10 +384,10 @@ internal class LiveTvViewModel @Inject constructor(
         if (save && !storeSource(active, source)) return
         val oldSource = active.source
         val sameAccount = oldSource?.cacheKey == source.cacheKey
-        val history = withContext(Dispatchers.IO) {
+        val saved = withContext(Dispatchers.IO) {
             ensureActive()
             runCatching { storage.writeCatalog(active.id, source, catalog) }
-            if (sameAccount) null else storage.readHistory(active.id, source)
+            if (sameAccount) null else storage.readHistory(active.id, source) to storage.readCategories(active.id, source)
         }
         if (oldSource !== source) {
             active.loadingGuide.clear()
@@ -390,7 +406,8 @@ internal class LiveTvViewModel @Inject constructor(
                 hasSource = true,
                 loading = false,
                 lastTunedChannelId = it.lastTunedChannelId.takeIf { sameAccount },
-                history = history ?: it.history,
+                history = saved?.first ?: it.history,
+                categories = saved?.second ?: it.categories,
                 guide = if (sameAccount) it.guide else emptyMap()
             )
         }

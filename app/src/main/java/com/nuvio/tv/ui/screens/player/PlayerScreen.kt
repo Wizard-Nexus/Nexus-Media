@@ -185,7 +185,11 @@ import com.nuvio.tv.libass.media.widget.AssSubtitleSurfaceView
 import kotlin.math.abs
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.tv.data.livetv.LiveChannel
+import com.nuvio.tv.ui.screens.livetv.LiveTvEdgeButton
 import com.nuvio.tv.ui.screens.livetv.LiveTvPlaybackGuide
+import com.nuvio.tv.ui.screens.livetv.LiveTvSeekBar
+import com.nuvio.tv.ui.screens.livetv.LiveTvSeekFeedback
+import com.nuvio.tv.ui.screens.livetv.rememberLiveTvSeekWindow
 import com.nuvio.tv.ui.screens.livetv.LiveTvPreviewStatus
 import com.nuvio.tv.ui.screens.livetv.liveTvGuidePreview
 import com.nuvio.tv.ui.screens.livetv.LiveTvViewModel
@@ -244,7 +248,9 @@ internal fun PlayerScreen(
     val liveControlsAvailable = liveTvControls != null && liveState?.profileId == liveTvControls.profileId &&
         liveTvControls.currentId in channelIndex
     val previousChannel = if (liveControlsAvailable && liveTvControls != null) {
-        liveState?.history?.previousChannel(liveTvControls.currentId, channelIndex::containsKey)?.let(channelIndex::get)
+        liveState?.history?.previousChannel(liveTvControls.currentId) { id ->
+            channelIndex[id]?.let { it.group !in liveState.categories.hidden } == true
+        }?.let(channelIndex::get)
     } else null
     var showLiveGuide by rememberSaveable { mutableStateOf(liveTvControls?.initialGuide != null) }
     var browseOnOpen by remember { mutableStateOf(liveTvControls?.initialGuide) }
@@ -771,6 +777,7 @@ internal fun PlayerScreen(
                                 liveTvControls.profileId, liveTvControls.currentId, offset
                             )?.let { switchChannel(it) }
                         },
+                        onSeek = viewModel::seekLiveTvBy,
                         onOpenControls = {
                             if (uiState.showPauseOverlay) viewModel.onEvent(PlayerEvent.OnDismissPauseOverlay)
                             if (!uiState.showControls) viewModel.onEvent(PlayerEvent.OnToggleControls)
@@ -1756,6 +1763,7 @@ internal fun PlayerScreen(
                     }
                 } else null,
                 onPreviousChannel = previousChannel?.let { channel -> { switchChannel(channel) } },
+                liveTvTransport = liveTvControls != null,
                 onShowPartyPanel = if (partyAvailable && viewModel.canUseParty) {
                     { viewModel.onEvent(PlayerEvent.OnShowPartyPanel) }
                 } else {
@@ -1940,11 +1948,17 @@ internal fun PlayerScreen(
                 .reportSubtitleClearance(subtitleClearanceGapPx) { seekClearancePx = it }
                 .then(playerControlsDim)
         ) {
-            SeekOverlayHost(
-                viewModel = viewModel,
-                chapters = uiState.chapters,
-                showChapterTitle = uiState.showChapterTitle
-            )
+            if (liveTvControls != null) {
+                val window by rememberLiveTvSeekWindow(seekOverlayVisible, viewModel, viewModel::readLiveTvSeekWindow)
+                val timeline by viewModel.playbackTimeline.collectAsState()
+                LiveTvSeekFeedback(window, timeline.watchedDurationMs)
+            } else {
+                SeekOverlayHost(
+                    viewModel = viewModel,
+                    chapters = uiState.chapters,
+                    showChapterTitle = uiState.showChapterTitle
+                )
+            }
         }
 
         // Chapters side panel (slides in from right, over a scrim)
@@ -2940,7 +2954,8 @@ private fun PlayerControlsOverlay(
     onSubtitleClearanceChanged: (Float) -> Unit = {},
     onSubtitleTitleBoundsChanged: (Float, Float) -> Unit = { _, _ -> },
     onShowChannelPicker: (() -> Unit)? = null,
-    onPreviousChannel: (() -> Unit)? = null
+    onPreviousChannel: (() -> Unit)? = null,
+    liveTvTransport: Boolean = false
 ) {
     val density = LocalDensity.current
     val clearanceOffsetPx = with(density) { (NuvioTheme.spacing.xl - SUBTITLE_CONTROLS_GAP).toPx() }
@@ -2966,8 +2981,11 @@ private fun PlayerControlsOverlay(
     val customEpisodesPainter = rememberRawSvgPainter(R.raw.ic_player_episodes)
     var showEngineSwitchConfirm by remember { mutableStateOf(false) }
     val playbackTimeline by viewModel.playbackTimeline.collectAsState()
-    val isLivePlayback = playbackTimeline.isLive
-    val progressUpTarget = if (isLivePlayback) {
+    val isLivePlayback = playbackTimeline.isLive || liveTvTransport
+    val seekWindow by rememberLiveTvSeekWindow(
+        liveTvTransport && subtitleReportingActive, viewModel, viewModel::readLiveTvSeekWindow
+    )
+    val progressUpTarget = if (isLivePlayback && seekWindow == null) {
         progressBarUpFocusRequester ?: playPauseFocusRequester
     } else {
         progressBarFocusRequester
@@ -3089,7 +3107,21 @@ private fun PlayerControlsOverlay(
 
             Spacer(modifier = Modifier.height(NuvioTheme.spacing.md))
 
-            if (!isLivePlayback) {
+            if (liveTvTransport) {
+                LiveTvSeekBar(
+                    window = seekWindow,
+                    modifier = Modifier.onGloballyPositioned { coordinates ->
+                        val rootHeight = coordinates.findRootCoordinates().size.height
+                        progressBarClearancePx = (rootHeight - coordinates.boundsInRoot().top + subtitleGapPx)
+                            .coerceAtLeast(0f)
+                    },
+                    focusRequester = progressBarFocusRequester,
+                    downFocusRequester = playPauseFocusRequester,
+                    onFocused = onResetHideTimer,
+                    onSeek = viewModel::seekLiveTvBy
+                )
+                Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
+            } else if (!isLivePlayback) {
                 // Progress bar — always LTR regardless of locale
                 DisposableEffect(Unit) {
                     onDispose { progressBarClearancePx = 0f }
@@ -3362,8 +3394,17 @@ private fun PlayerControlsOverlay(
                     )
                 }
 
-                // Right side - Time display only
-                PlayerControlsTimeTextHost(viewModel = viewModel)
+                if (liveTvTransport) {
+                    LiveTvEdgeButton(
+                        window = seekWindow,
+                        watchedMs = playbackTimeline.watchedDurationMs,
+                        onClick = viewModel::goLiveTv,
+                        modifier = Modifier.focusProperties { up = progressUpTarget },
+                        onFocused = onResetHideTimer
+                    )
+                } else {
+                    PlayerControlsTimeTextHost(viewModel = viewModel)
+                }
             }
             }
         }

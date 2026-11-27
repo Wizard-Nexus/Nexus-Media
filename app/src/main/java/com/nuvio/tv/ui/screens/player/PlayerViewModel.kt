@@ -213,6 +213,12 @@ class PlayerViewModel @Inject constructor(
 
     internal val livePlaybackStarted get() = controller.livePlaybackStarted
 
+    internal fun readLiveTvSeekWindow() = controller.liveTvSeekWindow()
+
+    internal fun seekLiveTvBy(deltaMs: Long) = controller.seekLiveTvBy(deltaMs)
+
+    internal fun goLiveTv() = controller.goLiveTv()
+
     val playbackTimeline: StateFlow<PlaybackTimelineState>
         get() = controller.playbackTimeline
 

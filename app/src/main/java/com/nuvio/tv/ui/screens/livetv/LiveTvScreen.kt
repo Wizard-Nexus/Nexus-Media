@@ -54,6 +54,7 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.LocalContentFocusRequester
 import com.nuvio.tv.R
 import com.nuvio.tv.data.livetv.LiveChannel
+import com.nuvio.tv.data.livetv.groupNames
 import com.nuvio.tv.data.livetv.LiveProgramme
 import com.nuvio.tv.data.livetv.LiveSportsEvent
 import com.nuvio.tv.ui.components.NuvioDialog
@@ -87,7 +88,8 @@ internal fun LiveTvScreen(
         onDispose { viewModel.setLiveTvVisible(false) }
     }
     val firstFocus = LocalContentFocusRequester.current
-    if (state.catalog?.channels.isNullOrEmpty()) {
+    val hasVisibleChannels = remember(state.catalog, state.categories.hidden) { state.visibleChannels().isNotEmpty() }
+    if (!hasVisibleChannels) {
         LiveTvEmptyGuide(state, firstFocus, onOpenSettings)
     } else {
         key(state.profileId, state.sourceKey) {
@@ -135,7 +137,11 @@ private fun LiveTvEmptyGuide(state: LiveTvState, firstFocus: FocusRequester, onO
             verticalArrangement = Arrangement.spacedBy(13.dp)
         ) {
             Text(stringResource(R.string.live_tv_guide), style = MaterialTheme.typography.headlineLarge)
-            val message = state.error ?: if (state.loading) R.string.live_tv_loading else R.string.live_tv_empty
+            val message = state.error ?: when {
+                state.loading -> R.string.live_tv_loading
+                state.hasSource && !state.catalog?.channels.isNullOrEmpty() -> R.string.live_tv_all_groups_hidden
+                else -> R.string.live_tv_empty
+            }
             Text(stringResource(message), color = GuideMuted)
             if (!state.loading) {
                 GuideButton(stringResource(R.string.live_tv_open_settings), onOpenSettings, Modifier.focusRequester(firstFocus))
@@ -159,9 +165,11 @@ private fun LiveTvGuideContent(
     onDismiss: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val channels = state.catalog?.channels.orEmpty()
+    val channels = remember(state.catalog, state.categories.hidden) { state.visibleChannels() }
     val channelIndex = remember(channels) { channels.associateBy { it.id } }
-    val groups = remember(channels) { channels.mapNotNull { it.group }.distinct() }
+    val groups = remember(state.catalog, state.categories) {
+        state.categories.ordered(state.catalog?.groupNames().orEmpty()).filterNot(state.categories.hidden::contains)
+    }
     val sports = remember(channels) { channels.filter { it.isSports } }
     val favouriteIds = remember(state.history.favourites) { state.history.favourites.toHashSet() }
     var section by rememberSaveable {

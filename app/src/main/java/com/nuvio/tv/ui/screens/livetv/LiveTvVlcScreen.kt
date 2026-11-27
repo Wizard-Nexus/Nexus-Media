@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -22,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -50,6 +52,7 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.data.livetv.LiveChannel
 import com.nuvio.tv.data.livetv.nowAndNext
+import com.nuvio.tv.ui.screens.player.LivePlaybackWatchClock
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -63,6 +66,7 @@ import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.util.VLCVideoLayout
+import kotlin.math.roundToLong
 
 private enum class VlcPlayback { OPENING, PLAYING, PAUSED, FAILED }
 
@@ -88,12 +92,15 @@ internal fun LiveTvVlcScreen(
     val streamUrl = remember(profileId, channelId, state.sourceKey, state.catalog) {
         viewModel.streamUrl(profileId, channelId)
     }
-    val previous = state.history.previousChannel(channelId, channelIndex::containsKey)?.let(channelIndex::get)
+    val previous = state.history.previousChannel(channelId) { id ->
+        channelIndex[id]?.let { it.group !in state.categories.hidden } == true
+    }?.let(channelIndex::get)
     val currentProgramme = state.guide[channelId].orEmpty().nowAndNext(liveGuideClock()).first
     val context = LocalContext.current.applicationContext
     val playbackLock = remember { Mutex() }
     val playerFocus = remember { FocusRequester() }
     val controlsFocus = remember { FocusRequester() }
+    val seekFocus = remember { FocusRequester() }
     val retryFocus = remember { FocusRequester() }
     var showControls by remember { mutableStateOf(false) }
     var showGuide by rememberSaveable { mutableStateOf(initialBrowse != null) }
@@ -101,6 +108,9 @@ internal fun LiveTvVlcScreen(
     val guideVisible = showGuide && current != null
     var menuInteraction by remember { mutableIntStateOf(0) }
     var retry by remember { mutableIntStateOf(0) }
+    var showSeekFeedback by remember(channelId) { mutableStateOf(false) }
+    val watchClock = remember(channelId) { LivePlaybackWatchClock() }
+    var watchedMs by remember(channelId) { mutableLongStateOf(0L) }
     var layout by remember { mutableStateOf<VLCVideoLayout?>(null) }
     var nativePlayer by remember(streamUrl, retry) { mutableStateOf<MediaPlayer?>(null) }
     var playback by remember(streamUrl, retry) { mutableStateOf(VlcPlayback.OPENING) }
@@ -110,6 +120,20 @@ internal fun LiveTvVlcScreen(
         channelId = channel.id
         showControls = false
         return true
+    }
+
+    fun seekBy(deltaMs: Long) {
+        val player = nativePlayer
+        val window = player?.liveTvSeekWindow()
+        if (player != null && window != null) {
+            val target = window.seekBy(deltaMs)
+            if (target != window.positionMs) {
+                val length = player.length
+                if (length > 0L) player.setPosition((target.toDouble() / length).toFloat().coerceIn(0f, 1f), false)
+            }
+        }
+        if (!showControls) showSeekFeedback = true
+        menuInteraction++
     }
 
     fun showFullscreen() {
@@ -190,6 +214,23 @@ internal fun LiveTvVlcScreen(
 
     val failed = playback == VlcPlayback.FAILED
     val controlsVisible = (showControls || failed) && !guideVisible
+    val window by rememberLiveTvSeekWindow(
+        !guideVisible && !failed && (controlsVisible || showSeekFeedback), nativePlayer
+    ) { nativePlayer?.liveTvSeekWindow() }
+    LaunchedEffect(channelId, playback, controlsVisible, showSeekFeedback) {
+        do {
+            watchedMs = watchClock.watchedDurationMs(
+                isLive = true,
+                isPlaying = playback == VlcPlayback.PLAYING,
+                nowElapsedMs = android.os.SystemClock.elapsedRealtime()
+            )
+            delay(1_000)
+        } while (controlsVisible || showSeekFeedback)
+    }
+    LaunchedEffect(showSeekFeedback, showControls, guideVisible, menuInteraction) {
+        if (showSeekFeedback && !showControls && !guideVisible) delay(1_500)
+        showSeekFeedback = false
+    }
     LaunchedEffect(controlsVisible, failed, guideVisible) {
         if (guideVisible) return@LaunchedEffect
         withFrameNanos { }
@@ -229,6 +270,7 @@ internal fun LiveTvVlcScreen(
                     key,
                     controlsVisible = controlsVisible,
                     onStep = { offset -> viewModel.adjacentChannel(profileId, channelId, offset)?.let { tune(it) } },
+                    onSeek = ::seekBy,
                     onOpenControls = { showControls = true }
                 )
             }
@@ -280,8 +322,17 @@ internal fun LiveTvVlcScreen(
                 currentProgramme?.let {
                     Text(stringResource(R.string.live_tv_now_line, it.title), color = Color.White)
                 }
-                if (failed) Text(stringResource(R.string.live_tv_vlc_error), color = Color.White)
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (failed) {
+                    Text(stringResource(R.string.live_tv_vlc_error), color = Color.White)
+                } else {
+                    LiveTvSeekBar(window, focusRequester = seekFocus, downFocusRequester = controlsFocus, onSeek = ::seekBy)
+                }
+                val seekUp = if (window == null) Modifier else Modifier.focusProperties { up = seekFocus }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     if (failed) {
                         Button(onClick = { retry++ }, modifier = Modifier.focusRequester(retryFocus)) {
                             Text(stringResource(R.string.action_retry))
@@ -292,12 +343,12 @@ internal fun LiveTvVlcScreen(
                             showControls = false
                             showGuide = true
                         },
-                        modifier = Modifier.focusRequester(controlsFocus)
+                        modifier = seekUp.focusRequester(controlsFocus)
                     ) {
                         Text(stringResource(R.string.live_tv_channel_picker))
                     }
                     previous?.let { channel ->
-                        Button(onClick = { tune(channel) }) {
+                        Button(onClick = { tune(channel) }, modifier = seekUp) {
                             Text(stringResource(R.string.live_tv_previous_channel))
                         }
                     }
@@ -306,12 +357,21 @@ internal fun LiveTvVlcScreen(
                         Button(onClick = {
                             if (paused) nativePlayer?.play() else nativePlayer?.pause()
                             menuInteraction++
-                        }) {
+                        }, modifier = seekUp) {
                             Text(stringResource(if (paused) R.string.live_tv_vlc_resume else R.string.live_tv_vlc_pause))
                         }
                     }
+                    if (!failed) {
+                        Spacer(Modifier.weight(1f))
+                        LiveTvEdgeButton(window, watchedMs, onClick = {
+                            retry++
+                            menuInteraction++
+                        }, modifier = seekUp)
+                    }
                 }
             }
+        } else if (showSeekFeedback && !guideVisible) {
+            LiveTvSeekFeedback(window, watchedMs, Modifier.align(Alignment.BottomCenter))
         }
         if (guideVisible) {
             LiveTvPlaybackGuide(
@@ -322,4 +382,14 @@ internal fun LiveTvVlcScreen(
             )
         }
     }
+}
+
+private fun MediaPlayer.liveTvSeekWindow(): LiveTvSeekWindow? {
+    if (!isSeekable) return null
+    val length = length
+    val fraction = position
+    if (length <= 0L || fraction !in 0f..1f) return null
+    // Leave time for the final segment to buffer. A fractional position follows the sliding playlist.
+    val edge = length - minOf(6_000L, length / 4)
+    return LiveTvSeekWindow(0L, edge, (length * fraction.toDouble()).roundToLong())
 }
