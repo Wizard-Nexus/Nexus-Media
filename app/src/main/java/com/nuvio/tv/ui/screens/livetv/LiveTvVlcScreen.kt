@@ -76,6 +76,7 @@ internal fun LiveTvVlcScreen(
     profileId: Int,
     initialChannelId: Long,
     initialBrowse: Bundle?,
+    onPlayArchive: (LiveTvArchivePlayback) -> Boolean,
     onExit: () -> Unit
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -377,6 +378,7 @@ internal fun LiveTvVlcScreen(
             LiveTvPlaybackGuide(
                 state, viewModel, channelId, browseOnOpen,
                 onTune = { channel, list, _ -> tune(channel, list) },
+                onPlayArchive = onPlayArchive,
                 onFullscreen = ::showFullscreen,
                 modifier = Modifier.zIndex(4f)
             )

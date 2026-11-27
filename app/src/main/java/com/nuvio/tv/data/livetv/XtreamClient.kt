@@ -14,6 +14,9 @@ import okhttp3.Request
 import java.io.IOException
 import java.security.MessageDigest
 import java.time.ZoneId
+import java.time.Instant
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 internal class XtreamSource private constructor(
@@ -43,7 +46,23 @@ internal class XtreamSource private constructor(
         .addPathSegment(streamId.toString() + "." + format)
         .build()
 
+    fun replayUrl(channel: LiveChannel, programme: LiveProgramme, catalog: XtreamCatalog): HttpUrl {
+        val zone = catalog.timezone?.let { runCatching { ZoneId.of(it) }.getOrNull() } ?: ZoneId.systemDefault()
+        val start = programme.archiveStart ?: REPLAY_TIME.format(Instant.ofEpochMilli(programme.startsAt).atZone(zone))
+        val minutes = (programme.endsAt - programme.startsAt + Math.floorMod(programme.startsAt, 60_000L) + 59_999L) / 60_000L
+        return server.newBuilder()
+            .addPathSegment("timeshift")
+            .addPathSegment(username)
+            .addPathSegment(password)
+            .addPathSegment(minutes.coerceAtLeast(1L).toString())
+            .addPathSegment(start)
+            .addPathSegment("${channel.id}.${catalog.format}")
+            .build()
+    }
+
     companion object {
+        private val REPLAY_TIME = DateTimeFormatter.ofPattern("uuuu-MM-dd:HH-mm", Locale.ROOT)
+
         fun from(server: String, username: String, password: String): XtreamSource? {
             val url = server.trim().toHttpUrlOrNull() ?: return null
             if (url.username.isNotEmpty() || url.password.isNotEmpty() || url.fragment != null) return null
@@ -70,7 +89,8 @@ internal data class LiveChannel(
     val id: Long,
     val name: String,
     val group: String?,
-    val logoUrl: String? = null
+    val logoUrl: String? = null,
+    val archiveDays: Int = 0
 ) {
     val isSports: Boolean
         get() = group?.contains("sport", ignoreCase = true) == true
@@ -115,7 +135,9 @@ internal class XtreamClient(
             val name = row.field("name") ?: return@mapNotNull null
             val logo = row.field("stream_icon")?.toHttpUrlOrNull()
                 ?.takeIf { it.username.isEmpty() && it.password.isEmpty() }?.toString()
-            LiveChannel(id, name, groups[row.field("category_id")], logo)
+            val archive = row.field("tv_archive")
+            val days = row.field("tv_archive_duration")?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+            LiveChannel(id, name, groups[row.field("category_id")], logo, if (archive == "0" || archive == "false") 0 else days)
         }.distinctBy { it.id }
         if (channels.isEmpty()) throw XtreamException(XtreamProblem.NO_CHANNELS)
         val timezone = (received["server_info"] as? JsonObject)?.field("timezone")

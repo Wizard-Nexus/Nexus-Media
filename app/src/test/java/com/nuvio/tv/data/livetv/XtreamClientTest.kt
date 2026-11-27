@@ -8,6 +8,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
 
 class XtreamClientTest {
     @Test
@@ -20,8 +21,8 @@ class XtreamClientTest {
                 """[{"category_id":"12","category_name":"AU Sports"},{"category_id":18,"category_name":"Local"}]"""
             ))
             server.enqueue(MockResponse().setBody(
-                """[{"stream_id":"101","name":"Test Sports","category_id":12,"stream_icon":"https://images.example.test/sport.png"},
-                   {"stream_id":102,"name":"Test News","category_id":"18"},
+                """[{"stream_id":"101","name":"Test Sports","category_id":12,"stream_icon":"https://images.example.test/sport.png","tv_archive":1,"tv_archive_duration":"3"},
+                   {"stream_id":102,"name":"Test News","category_id":"18","tv_archive":0,"tv_archive_duration":7},
                    {"stream_id":true,"name":"Invalid entry"}]"""
             ))
 
@@ -33,6 +34,7 @@ class XtreamClientTest {
             assertEquals("https://images.example.test/sport.png", catalog.channels.first().logoUrl)
             assertNull(catalog.channels.last().logoUrl)
             assertFalse(catalog.channels.last().isSports)
+            assertEquals(listOf(3, 0), catalog.channels.map { it.archiveDays })
             assertEquals("m3u8", catalog.format)
             assertEquals("/iptv/live/aa+bb/p%2Fa%3Fs/101.m3u8", source.streamUrl(101, catalog.format).encodedPath)
 
@@ -77,6 +79,37 @@ class XtreamClientTest {
             assertEquals("get_simple_data_table", request.queryParameter("action"))
             assertEquals("42", request.queryParameter("stream_id"))
             assertNull(request.queryParameter("limit"))
+        }
+    }
+
+    @Test
+    fun usesProviderLocalTimeAndArchiveRightsForReplays() {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody(
+                """{"epg_listings":[
+                    {"title":"Earlier match","start":"2026-11-27 13:15:39","end":"2026-11-27 14:00:08","has_archive":"1"},
+                    {"title":"Rights restricted","start":"2026-11-27 14:00:08","end":"2026-11-27 14:45:00","has_archive":0},
+                    {"title":"Late match","start":"2026-11-27 18:00:00","end":"2026-11-27 20:00:00"}]}"""
+            ))
+            val source = checkNotNull(XtreamSource.from(server.url("/iptv/").toString(), "aa+bb", "p/a?s"))
+            val channel = LiveChannel(101, "Arena", "Sports", archiveDays = 3)
+            val catalog = XtreamCatalog(listOf(channel), "m3u8", "Australia/Sydney")
+            val (match, restricted, future) = XtreamClient().guide(source, channel.id, catalog.timezone, full = true)
+            val now = Instant.parse("2026-11-27T04:00:00Z").toEpochMilli()
+
+            assertTrue(match.canReplay(channel, now))
+            assertTrue(match.canReplay(channel.copy(archiveDays = 0), now))
+            assertFalse(restricted.canReplay(channel, now))
+            assertFalse(future.canReplay(channel, now))
+            assertFalse(match.canReplay(channel, now + 3 * 86_400_000L))
+            assertEquals(
+                "/iptv/timeshift/aa+bb/p%2Fa%3Fs/46/2026-11-27:13-15/101.m3u8",
+                source.replayUrl(channel, match, catalog).encodedPath
+            )
+            assertEquals(
+                source.replayUrl(channel, match, catalog),
+                source.replayUrl(channel, match.copy(archiveStart = null), catalog)
+            )
         }
     }
 

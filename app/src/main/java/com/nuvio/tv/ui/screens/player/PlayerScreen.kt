@@ -192,6 +192,7 @@ import com.nuvio.tv.ui.screens.livetv.LiveTvSeekFeedback
 import com.nuvio.tv.ui.screens.livetv.rememberLiveTvSeekWindow
 import com.nuvio.tv.ui.screens.livetv.LiveTvPreviewStatus
 import com.nuvio.tv.ui.screens.livetv.liveTvGuidePreview
+import com.nuvio.tv.ui.screens.livetv.LiveTvArchivePlayback
 import com.nuvio.tv.ui.screens.livetv.LiveTvViewModel
 import com.nuvio.tv.ui.screens.livetv.handleLiveTvRemoteKey
 import kotlinx.coroutines.flow.collectLatest
@@ -227,7 +228,8 @@ internal data class LiveTvPlayerControls(
     val currentId: Long,
     val profileId: Int,
     val initialGuide: Bundle?,
-    val onTune: (LiveChannel, List<LiveChannel>?, browse: Bundle?, releasePrevious: () -> Unit) -> Boolean
+    val onTune: (LiveChannel, List<LiveChannel>?, browse: Bundle?, releasePrevious: () -> Unit) -> Boolean,
+    val onPlayArchive: (LiveTvArchivePlayback, releasePrevious: () -> Unit) -> Boolean
 )
 
 @Composable
@@ -2325,6 +2327,7 @@ internal fun PlayerScreen(
                 currentId = liveTvControls.currentId,
                 initialBrowse = browseOnOpen,
                 onTune = ::switchChannel,
+                onPlayArchive = { liveTvControls.onPlayArchive(it, viewModel::stopAndRelease) },
                 onFullscreen = ::showFullscreen,
                 modifier = Modifier.zIndex(4f)
             )

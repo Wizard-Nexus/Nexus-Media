@@ -10,14 +10,24 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Base64
+import java.util.Locale
+import java.time.temporal.ChronoUnit
 
 internal data class LiveProgramme(
     val title: String,
     val startsAt: Long,
     val endsAt: Long,
-    val description: String? = null
+    val description: String? = null,
+    val hasArchive: Boolean? = null,
+    val archiveStart: String? = null
 ) {
     fun isOnAir(now: Long): Boolean = now in startsAt until endsAt
+}
+
+internal fun LiveProgramme.canReplay(channel: LiveChannel, now: Long): Boolean {
+    if (endsAt > now || hasArchive == false) return false
+    if (channel.archiveDays <= 0) return hasArchive == true
+    return now - startsAt <= channel.archiveDays.toLong() * 86_400_000L
 }
 
 internal fun List<LiveProgramme>.nowAndNext(now: Long): Pair<LiveProgramme?, LiveProgramme?> =
@@ -47,7 +57,15 @@ internal fun parseXtreamGuide(response: JsonObject, providerZone: ZoneId?): List
         val end = entry.time("stop_timestamp", "end", providerZone) ?: return@mapNotNull null
         if (end <= start) return@mapNotNull null
         val description = entry.value("description")?.let(::guideText)
-        LiveProgramme(title, start, end, description)
+        val archived = when (entry.value("has_archive")?.lowercase(Locale.ROOT)) {
+            "1", "true" -> true
+            "0", "false" -> false
+            else -> null
+        }
+        val archiveStart = entry.value("start")?.let { local ->
+            runCatching { REPLAY_TIME.format(LocalDateTime.parse(local, XTREAM_TIME).truncatedTo(ChronoUnit.MINUTES)) }.getOrNull()
+        }
+        LiveProgramme(title, start, end, description, archived, archiveStart)
     }.distinctBy { Triple(it.startsAt, it.endsAt, it.title) }.sortedBy { it.startsAt }
 }
 
@@ -73,3 +91,5 @@ private fun guideText(title: String): String {
 }
 
 private val XTREAM_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+
+private val REPLAY_TIME = DateTimeFormatter.ofPattern("uuuu-MM-dd:HH-mm", Locale.ROOT)

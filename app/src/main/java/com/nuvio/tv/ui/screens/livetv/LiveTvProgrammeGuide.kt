@@ -62,6 +62,7 @@ import coil3.compose.AsyncImage
 import com.nuvio.tv.R
 import com.nuvio.tv.data.livetv.LiveChannel
 import com.nuvio.tv.data.livetv.LiveProgramme
+import com.nuvio.tv.data.livetv.canReplay
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -311,6 +312,7 @@ internal fun LiveTvGuideRow(
     onBrowse: (Long) -> Unit,
     onOpenCategories: () -> Unit,
     onSelect: (LiveProgramme?) -> Unit,
+    onProgrammeOptions: (LiveProgramme) -> Unit,
     onFavourite: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -368,7 +370,7 @@ internal fun LiveTvGuideRow(
         }
         Surface(
             onClick = { onSelect(focusedBlock?.programme) },
-            onLongClick = onFavourite,
+            onLongClick = { focusedBlock?.programme?.let(onProgrammeOptions) ?: onFavourite() },
             modifier = Modifier.width(window.width).fillMaxHeight().padding(vertical = 2.dp)
                 .focusRequester(track)
                 .onFocusChanged {
@@ -416,8 +418,11 @@ internal fun LiveTvGuideRow(
                         contentAlignment = Alignment.CenterStart
                     ) {
                         if (width >= 24.dp) {
+                            val programme = block.programme
+                            val title = programme?.title ?: stringResource(R.string.live_tv_guide_unavailable)
+                            val replay = width >= 48.dp && programme?.canReplay(channel, now) == true
                             Text(
-                                block.programme?.title ?: stringResource(R.string.live_tv_guide_unavailable),
+                                if (replay) stringResource(R.string.live_tv_replay_marker, title) else title,
                                 color = if (active || block.programme != null) GuideText else GuideMuted,
                                 fontSize = 12.sp,
                                 maxLines = 1,

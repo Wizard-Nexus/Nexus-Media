@@ -57,6 +57,7 @@ import com.nuvio.tv.ui.screens.livetv.LiveTvScreen
 import com.nuvio.tv.ui.screens.livetv.LiveTvVlcScreen
 import com.nuvio.tv.ui.screens.livetv.rememberLiveTvHomeShortcutsVisible
 import com.nuvio.tv.ui.screens.player.LiveTvPlayerControls
+import com.nuvio.tv.ui.screens.livetv.LiveTvArchivePlayback
 import com.nuvio.tv.ui.screens.livetv.LiveTvViewModel
 import com.nuvio.tv.ui.screens.player.PlayerExitReason
 import com.nuvio.tv.ui.screens.player.PlayerScreen
@@ -161,6 +162,28 @@ private fun PlaybackNavHost(
             if (releasePrevious != null) popUpTo(origin.destination.id) { inclusive = true }
         }
         if (guide != null) navController.currentBackStackEntry?.savedStateHandle?.set(LIVE_TV_GUIDE_STATE, guide)
+        return true
+    }
+
+    fun playLiveArchive(
+        media: LiveTvArchivePlayback,
+        origin: NavBackStackEntry,
+        replacePlayer: Boolean = false,
+        releasePrevious: (() -> Unit)? = null
+    ): Boolean {
+        if (navController.currentBackStackEntry != origin || liveTv.state.value.profileId != media.profileId) return false
+        val route = Screen.Player.createRoute(
+            streamUrl = media.url,
+            title = media.title,
+            contentName = media.title,
+            filename = media.filename,
+            startFromBeginning = true,
+            profileId = media.profileId
+        )
+        releasePrevious?.invoke()
+        navController.navigate(route) {
+            if (replacePlayer) popUpTo(origin.destination.id) { inclusive = true }
+        }
         return true
     }
 
@@ -1028,6 +1051,9 @@ private fun PlaybackNavHost(
                         onTune = { channel, list, guide, release ->
                             if (navController.currentBackStackEntry != backStackEntry) false
                             else playLiveChannel(channel, Screen.Player.route, list, guide, release)
+                        },
+                        onPlayArchive = { media, release ->
+                            playLiveArchive(media, backStackEntry, replacePlayer = true, releasePrevious = release)
                         }
                     )
                 } else null,
@@ -1355,10 +1381,11 @@ private fun PlaybackNavHost(
             )
         }
 
-        rootComposable(Screen.LiveTv.route) {
+        rootComposable(Screen.LiveTv.route) { entry ->
             LiveTvScreen(
                 viewModel = liveTv,
                 onPlay = { channel, list, guide -> playLiveChannel(channel, Screen.LiveTv.route, list, guide) },
+                onPlayArchive = { playLiveArchive(it, entry) },
                 onOpenSettings = {
                     navController.navigate(Screen.Settings.route)
                     navController.currentBackStackEntry?.savedStateHandle?.set("openLiveTvSettings", true)
@@ -1379,6 +1406,7 @@ private fun PlaybackNavHost(
                 profileId = args.getInt("profileId"),
                 initialChannelId = args.getLong("channelId"),
                 initialBrowse = entry.savedStateHandle.get<Bundle>(LIVE_TV_GUIDE_STATE),
+                onPlayArchive = { playLiveArchive(it, entry, replacePlayer = true) },
                 onExit = {
                     if (navController.currentBackStackEntry == entry) navController.popBackStack()
                 }

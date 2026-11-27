@@ -104,4 +104,30 @@
         <item quantity="other">Connection verified. %1$d channels are ready to save.</item>
     </plurals>
     <string name="licenses_attributions_libvlc_body">VideoLAN and VLC contributors · GNU Lesser General Public License v2.1</string>
+    <string name="live_tv_recordings">Recordings</string>
+    <string name="live_tv_record_programme">Record programme</string>
+    <string name="live_tv_cancel_recording">Cancel recording</string>
+    <string name="live_tv_stop_recording">Stop recording</string>
+    <string name="live_tv_play_recording">Play recording</string>
+    <string name="live_tv_delete_recording">Delete recording?</string>
+    <string name="live_tv_play_replay">Play replay</string>
+    <string name="live_tv_replay_marker">▶ %1$s</string>
+    <string name="live_tv_replay_unavailable">Your provider has no replay available for this programme.</string>
+    <string name="live_tv_recording_empty">Choose an upcoming programme in the TV Guide to schedule a recording.</string>
+    <string name="live_tv_recording_device_help">Recordings are saved on this TV. Leave it connected and in standby or on at the scheduled time.</string>
+    <string name="live_tv_recording_schedule_permission">Allow scheduled recordings</string>
+    <string name="live_tv_recording_permission_help">Allow alarms and reminders in Android settings so Nexus Media can start the recording on time.</string>
+    <string name="live_tv_recording_overlap">Another recording is scheduled at this time. This TV records one programme at a time.</string>
+    <string name="live_tv_recording_save_error">Couldn’t save the schedule. Check your available storage and try again.</string>
+    <string name="live_tv_recording_unavailable">Recording is no longer available for this programme.</string>
+    <string name="live_tv_recording_file_unavailable">This recording file is unavailable.</string>
+    <string name="live_tv_recording_scheduled">Scheduled</string>
+    <string name="live_tv_recording_running">Recording</string>
+    <string name="live_tv_recording_stopping">Finishing</string>
+    <string name="live_tv_recording_complete">Recorded</string>
+    <string name="live_tv_recording_partial">Partial recording</string>
+    <string name="live_tv_recording_failed">Recording failed</string>
+    <string name="live_tv_recording_missed">Missed</string>
+    <string name="live_tv_recording_starting">Starting recording…</string>
+    <string name="live_tv_recording_entry_subtitle">%1$s · %2$s · %3$s</string>
 </resources>

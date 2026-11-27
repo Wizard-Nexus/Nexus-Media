@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.screens.livetv
 
 import android.content.Context
+import android.net.Uri
 import android.os.SystemClock
 import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
@@ -11,6 +12,11 @@ import com.nuvio.tv.core.server.DeviceIpAddress
 import com.nuvio.tv.core.server.XtreamPhoneSetupServer
 import com.nuvio.tv.data.livetv.LiveChannel
 import com.nuvio.tv.data.livetv.LiveProgramme
+import com.nuvio.tv.data.livetv.LiveRecording
+import com.nuvio.tv.data.livetv.LiveSportsEvent
+import com.nuvio.tv.data.livetv.LiveTvRecordings
+import com.nuvio.tv.data.livetv.RecordingRequest
+import com.nuvio.tv.data.livetv.canReplay
 import com.nuvio.tv.data.livetv.LiveTvCategories
 import com.nuvio.tv.data.livetv.LiveTvHistory
 import com.nuvio.tv.data.livetv.LiveTvPlayer
@@ -59,6 +65,13 @@ internal data class LiveTvState(
     }
 }
 
+internal data class LiveTvArchivePlayback(
+    val url: String,
+    val title: String,
+    val profileId: Int,
+    val filename: String? = null
+)
+
 internal data class XtreamPhoneSetupState(
     val url: String? = null,
     val testing: Boolean = false,
@@ -70,7 +83,8 @@ internal data class XtreamPhoneSetupState(
 internal class LiveTvViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val profiles: ProfileManager,
-    private val storage: LiveTvStorage
+    private val storage: LiveTvStorage,
+    private val recorder: LiveTvRecordings
 ) : ViewModel() {
     private data class GuideCheck(val checkedAt: Long, val full: Boolean)
 
@@ -99,8 +113,10 @@ internal class LiveTvViewModel @Inject constructor(
     val state = _state.asStateFlow()
     private val _phone = MutableStateFlow<XtreamPhoneSetupState?>(null)
     val phone = _phone.asStateFlow()
+    val recordings = recorder.entries
 
     init {
+        viewModelScope.launch(Dispatchers.IO) { recorder.restoreAlarms() }
         viewModelScope.launch {
             combine(profiles.activeProfileId, storage.resetVersion) { id, reset -> id to reset }
                 .collect { (id, reset) -> openProfile(id, reset) }
@@ -144,6 +160,37 @@ internal class LiveTvViewModel @Inject constructor(
     private fun refreshIfStale() {
         val refreshedAt = profile?.refreshedAt
         if (refreshedAt == null || SystemClock.elapsedRealtime() - refreshedAt >= CATALOG_TTL_MS) refresh()
+    }
+
+    suspend fun recordProgramme(event: LiveSportsEvent): RecordingRequest {
+        val active = currentProfile() ?: return RecordingRequest.UNAVAILABLE
+        val source = active.source ?: return RecordingRequest.UNAVAILABLE
+        val catalog = _state.value.catalog ?: return RecordingRequest.UNAVAILABLE
+        val channel = catalog.channels.firstOrNull { it.id == event.channel.id } ?: return RecordingRequest.UNAVAILABLE
+        return withContext(Dispatchers.IO) {
+            recorder.schedule(active.id, source.cacheKey, channel, event.programme, catalog.format)
+        }
+    }
+
+    fun stopOrRemoveRecording(entry: LiveRecording) {
+        val active = currentProfile() ?: return
+        if (active.id == entry.profileId) active.scope.launch(Dispatchers.IO) { recorder.stopOrRemove(active.id, entry.id) }
+    }
+
+    fun playRecording(entry: LiveRecording): LiveTvArchivePlayback? {
+        val active = currentProfile() ?: return null
+        val file = recorder.recordingFile(active.id, entry.id) ?: return null
+        return LiveTvArchivePlayback(Uri.fromFile(file).toString(), entry.title, active.id, file.name)
+    }
+
+    fun playReplay(event: LiveSportsEvent): LiveTvArchivePlayback? {
+        val active = currentProfile() ?: return null
+        val source = active.source ?: return null
+        val catalog = _state.value.catalog ?: return null
+        val channel = catalog.channels.firstOrNull { it.id == event.channel.id } ?: return null
+        if (!event.programme.canReplay(channel, System.currentTimeMillis())) return null
+        val url = source.replayUrl(channel, event.programme, catalog).toString()
+        return LiveTvArchivePlayback(url, event.programme.title, active.id, "replay.${catalog.format}")
     }
 
     fun refresh() {

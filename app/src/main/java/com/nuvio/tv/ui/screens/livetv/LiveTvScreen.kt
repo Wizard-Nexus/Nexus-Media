@@ -80,7 +80,8 @@ private val GuideSections = listOf(LiveTvSection.FAVOURITES, LiveTvSection.ALL, 
 internal fun LiveTvScreen(
     viewModel: LiveTvViewModel,
     onPlay: (LiveChannel, List<LiveChannel>, Bundle) -> Boolean,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onPlayArchive: (LiveTvArchivePlayback) -> Boolean
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     DisposableEffect(viewModel) {
@@ -90,10 +91,14 @@ internal fun LiveTvScreen(
     val firstFocus = LocalContentFocusRequester.current
     val hasVisibleChannels = remember(state.catalog, state.categories.hidden) { state.visibleChannels().isNotEmpty() }
     if (!hasVisibleChannels) {
-        LiveTvEmptyGuide(state, firstFocus, onOpenSettings)
+        var showRecordings by remember(state.profileId) { mutableStateOf(false) }
+        LiveTvEmptyGuide(state, firstFocus, onOpenSettings, onRecordings = { showRecordings = true })
+        if (showRecordings) {
+            LiveTvRecordingsDialog(viewModel, state.profileId, onPlayArchive) { showRecordings = false }
+        }
     } else {
         key(state.profileId, state.sourceKey) {
-            LiveTvGuideContent(state, viewModel, firstFocus, onPlay)
+            LiveTvGuideContent(state, viewModel, firstFocus, onPlay, onPlayArchive)
         }
     }
 }
@@ -106,6 +111,7 @@ internal fun LiveTvPlaybackGuide(
     initialBrowse: Bundle?,
     onTune: (LiveChannel, List<LiveChannel>, Bundle) -> Boolean,
     onFullscreen: () -> Unit,
+    onPlayArchive: (LiveTvArchivePlayback) -> Boolean,
     modifier: Modifier = Modifier
 ) {
     val firstFocus = remember { FocusRequester() }
@@ -120,6 +126,7 @@ internal fun LiveTvPlaybackGuide(
                     onTune(channel, list, browse)
                 }
             },
+            onPlayArchive = onPlayArchive,
             playingId = currentId,
             initialBrowse = initialBrowse,
             onDismiss = onFullscreen,
@@ -129,7 +136,12 @@ internal fun LiveTvPlaybackGuide(
 }
 
 @Composable
-private fun LiveTvEmptyGuide(state: LiveTvState, firstFocus: FocusRequester, onOpenSettings: () -> Unit) {
+private fun LiveTvEmptyGuide(
+    state: LiveTvState,
+    firstFocus: FocusRequester,
+    onOpenSettings: () -> Unit,
+    onRecordings: () -> Unit
+) {
     Box(Modifier.fillMaxSize().background(GuideRail), contentAlignment = Alignment.Center) {
         Column(
             modifier = Modifier.padding(32.dp),
@@ -145,6 +157,7 @@ private fun LiveTvEmptyGuide(state: LiveTvState, firstFocus: FocusRequester, onO
             Text(stringResource(message), color = GuideMuted)
             if (!state.loading) {
                 GuideButton(stringResource(R.string.live_tv_open_settings), onOpenSettings, Modifier.focusRequester(firstFocus))
+                GuideButton(stringResource(R.string.live_tv_recordings), onRecordings)
                 LaunchedEffect(firstFocus) {
                     withFrameNanos { }
                     runCatching { firstFocus.requestFocus() }
@@ -160,6 +173,7 @@ private fun LiveTvGuideContent(
     viewModel: LiveTvViewModel,
     firstFocus: FocusRequester,
     onPlay: (LiveChannel, List<LiveChannel>, Bundle) -> Boolean,
+    onPlayArchive: (LiveTvArchivePlayback) -> Boolean,
     playingId: Long? = null,
     initialBrowse: Bundle? = null,
     onDismiss: (() -> Unit)? = null,
@@ -181,6 +195,8 @@ private fun LiveTvGuideContent(
     var query by rememberSaveable { mutableStateOf(initialBrowse?.getString("query").orEmpty()) }
     var searching by remember { mutableStateOf(false) }
     var eventDetails by remember { mutableStateOf<LiveSportsEvent?>(null) }
+    var showRecordings by remember { mutableStateOf(false) }
+    val recordings by viewModel.recordings.collectAsStateWithLifecycle()
     var categoriesVisible by rememberSaveable { mutableStateOf(initialBrowse?.getBoolean("categories") ?: (playingId == null)) }
     var restorePlaybackFocus by rememberSaveable { mutableStateOf(false) }
     var placedFocus by remember { mutableStateOf(false) }
@@ -242,11 +258,22 @@ private fun LiveTvGuideContent(
     }
 
     fun select(channel: LiveChannel, programme: LiveProgramme?) {
-        if (playingId != null || programme == null || programme.isOnAir(now)) {
+        val selectedAt = System.currentTimeMillis()
+        if (programme == null || programme.isOnAir(selectedAt)) {
             play(channel)
-        } else {
-            eventDetails = LiveSportsEvent(channel, programme)
+            return
         }
+
+        val event = LiveSportsEvent(channel, programme)
+        if (programme.endsAt <= selectedAt) {
+            val saved = recordings.firstOrNull {
+                it.profileId == state.profileId && it.sourceKey == state.sourceKey &&
+                    it.status.playable && it.matches(channel, programme)
+            }
+            val playback = saved?.let(viewModel::playRecording) ?: viewModel.playReplay(event)
+            if (playback != null && onPlayArchive(playback)) return
+        }
+        eventDetails = event
     }
 
     LaunchedEffect(section, group, query) {
@@ -281,7 +308,7 @@ private fun LiveTvGuideContent(
     LaunchedEffect(railFocusRequest, categoriesVisible) {
         if (!categoriesVisible || railFocusRequest == 0) return@LaunchedEffect
         val groupIndex = groups.indexOf(group)
-        val index = if (groupIndex < 0) GuideSections.indexOf(sectionKey) else GuideSections.size + 1 + groupIndex
+        val index = if (groupIndex < 0) GuideSections.indexOf(sectionKey) else GuideSections.size + 2 + groupIndex
         railState.scrollToItem(index.coerceAtLeast(0))
         withFrameNanos { }
         runCatching { categoryFocus.requestFocus() }
@@ -303,7 +330,7 @@ private fun LiveTvGuideContent(
     val featured = remember(showSports, sports, state.guide, now) {
         if (showSports) featuredSportsEvents(sports, state.guide, now, 6) else emptyList()
     }
-    BackHandler(playingId == null && !categoriesVisible && !searching && eventDetails == null) { showCategories() }
+    BackHandler(playingId == null && !categoriesVisible && !searching && !showRecordings && eventDetails == null) { showCategories() }
 
     BoxWithConstraints(modifier.fillMaxSize().background(GuideRail)) {
         val detailsHeight = maxHeight * GUIDE_HEADER_SHARE
@@ -372,6 +399,7 @@ private fun LiveTvGuideContent(
                             query = ""
                             resetList()
                         },
+                        onRecordings = { showRecordings = true },
                         enterChannels = { items.isNotEmpty() && runCatching { rowFocus.requestFocus() }.getOrDefault(false) },
                         modifier = Modifier.width(railWidth).fillMaxHeight()
                     )
@@ -427,6 +455,7 @@ private fun LiveTvGuideContent(
                                     onBrowse = ::reveal,
                                     onOpenCategories = ::showCategories,
                                     onSelect = { programme -> select(channel, programme) },
+                                    onProgrammeOptions = { programme -> eventDetails = LiveSportsEvent(channel, programme) },
                                     onFavourite = { viewModel.toggleFavourite(channel.id) },
                                     modifier = if (channel.id == targetRow?.id) {
                                         Modifier.focusRequester(rowFocus).then(
@@ -457,14 +486,20 @@ private fun LiveTvGuideContent(
         )
     }
     eventDetails?.let { event ->
-        LiveTvEventDialog(
-            event,
-            onWatch = {
-                eventDetails = null
-                play(event.channel)
+        LiveTvProgrammeDialog(
+            event = event,
+            viewModel = viewModel,
+            recording = recordings.firstOrNull {
+                it.profileId == state.profileId && it.sourceKey == state.sourceKey &&
+                    it.matches(event.channel, event.programme)
             },
+            onWatch = { play(event.channel) },
+            onPlayArchive = onPlayArchive,
             onDismiss = { eventDetails = null }
         )
+    }
+    if (showRecordings) {
+        LiveTvRecordingsDialog(viewModel, state.profileId, onPlayArchive) { showRecordings = false }
     }
 }
 
@@ -478,6 +513,7 @@ private fun LiveTvCategoryRail(
     firstFocus: FocusRequester,
     onSection: (LiveTvSection) -> Unit,
     onGroup: (String) -> Unit,
+    onRecordings: () -> Unit,
     enterChannels: () -> Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -494,6 +530,12 @@ private fun LiveTvCategoryRail(
                 if (item == LiveTvSection.FAVOURITES) "★  $label" else label,
                 selected, selectedFocus, firstFocus, enterChannels
             ) { onSection(item) }
+        }
+        item("recordings") {
+            GuideCategoryItem(
+                stringResource(R.string.live_tv_recordings), false, selectedFocus, firstFocus, enterChannels,
+                onClick = onRecordings
+            )
         }
         if (groups.isNotEmpty()) {
             item("category-heading") {
