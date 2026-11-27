@@ -207,11 +207,12 @@ internal fun PlayerRuntimeController.applyBluetoothAudioRouteInPlace(isBluetooth
     sink?.setBluetoothForcePcm(isBluetooth)
 
     val settings = currentPlayerSettingsForReport
-    val forceOptical = !isBluetooth &&
+    val forceStereoPcm = isBluetooth || stereoPcmForLiveTv
+    val forceOptical = !forceStereoPcm &&
         settings.forceOpticalPassthrough &&
         settings.decoderPriority != 0
-    val downmixEnabled = settings.effectiveDownmixEnabled || isBluetooth
-    val outputChannels = if (isBluetooth) {
+    val downmixEnabled = settings.effectiveDownmixEnabled || forceStereoPcm
+    val outputChannels = if (forceStereoPcm) {
         AudioOutputChannels.CHANNELS_2_0
     } else {
         settings.audioOutputChannels
@@ -243,7 +244,7 @@ internal fun PlayerRuntimeController.applyBluetoothAudioRouteInPlace(isBluetooth
 internal fun PlayerRuntimeController.applyMpvBluetoothAudioRouteInPlace(isBluetooth: Boolean) {
     val view = mpvView ?: return
     val wasPlaying = hasActivePlayIntent() && !userPausedManually
-    view.applyBluetoothAudioRoute(isBluetooth, reloadOutput = true)
+    view.applyPcmAudioOutput(isBluetooth || stereoPcmForLiveTv, reloadOutput = true)
     // ao-reload can drop live properties; re-pin the current per-route delay.
     view.setAudioDelayMs(_uiState.value.audioDelayMs)
     view.applyAudioAmplificationDb(_uiState.value.audioAmplificationDb)

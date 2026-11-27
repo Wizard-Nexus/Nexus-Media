@@ -38,13 +38,17 @@ import androidx.tv.material3.Button
 import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.core.qr.QrCodeGenerator
+import com.nuvio.tv.data.livetv.LIVE_TV_GUIDE_HISTORY_DAYS
 import com.nuvio.tv.data.livetv.LiveTvPlayer
 import com.nuvio.tv.data.livetv.groupNames
+import com.nuvio.tv.domain.model.AppTheme
 import com.nuvio.tv.ui.components.NuvioDialog
 import com.nuvio.tv.ui.screens.account.InputField
 import com.nuvio.tv.ui.screens.livetv.LiveTvViewModel
 import com.nuvio.tv.ui.screens.livetv.XtreamPhoneSetupState
 import com.nuvio.tv.ui.theme.NuvioTheme
+
+private enum class LiveTvPicker { PLAYER, AUDIO, HISTORY, COLOUR }
 
 @Composable
 internal fun LiveTvSettingsContent(viewModel: LiveTvViewModel, initialFocusRequester: FocusRequester?) {
@@ -54,12 +58,20 @@ internal fun LiveTvSettingsContent(viewModel: LiveTvViewModel, initialFocusReque
         onDispose { viewModel.closePhoneSetup() }
     }
     key(state.profileId) {
-        var showPlayers by remember { mutableStateOf(false) }
+        var picker by remember { mutableStateOf<LiveTvPicker?>(null) }
         var connecting by remember { mutableStateOf(false) }
         var showCategories by remember(state.sourceKey) { mutableStateOf(false) }
         val categories = remember(state.catalog) { state.catalog?.groupNames().orEmpty() }
         val playerTitle = stringResource(R.string.live_tv_player)
         val playerHelp = stringResource(R.string.live_tv_player_help)
+        val audioTitle = stringResource(R.string.live_tv_audio_output)
+        val audioHelp = stringResource(R.string.live_tv_audio_output_help)
+        val audioOptions = listOf(
+            SettingsPickerOption(false, stringResource(R.string.live_tv_audio_automatic)),
+            SettingsPickerOption(true, stringResource(R.string.live_tv_audio_stereo_pcm))
+        )
+        val historyTitle = stringResource(R.string.live_tv_guide_history)
+        val historyHelp = stringResource(R.string.live_tv_guide_history_help)
         val players = listOf(
             SettingsPickerOption(LiveTvPlayer.DEFAULT, stringResource(R.string.live_tv_player_default)),
             SettingsPickerOption(LiveTvPlayer.LIBVLC, "LibVLC")
@@ -74,8 +86,28 @@ internal fun LiveTvSettingsContent(viewModel: LiveTvViewModel, initialFocusReque
                     title = playerTitle,
                     subtitle = null,
                     value = players.first { it.value == state.player }.title,
-                    onClick = { showPlayers = true },
+                    onClick = { picker = LiveTvPicker.PLAYER },
                     modifier = initialFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier
+                )
+                SettingsActionRow(
+                    title = audioTitle,
+                    subtitle = audioHelp,
+                    value = audioOptions.first { it.value == state.stereoPcm }.title,
+                    onClick = { picker = LiveTvPicker.AUDIO }
+                )
+            }
+            SettingsGroupCard {
+                SettingsActionRow(
+                    title = historyTitle,
+                    subtitle = historyHelp,
+                    value = pluralStringResource(R.plurals.live_tv_history_days, state.guideHistoryDays, state.guideHistoryDays),
+                    onClick = { picker = LiveTvPicker.HISTORY }
+                )
+                SettingsActionRow(
+                    title = stringResource(R.string.live_tv_guide_colour),
+                    subtitle = null,
+                    value = guideColourName(state.guideColour),
+                    onClick = { picker = LiveTvPicker.COLOUR }
                 )
             }
             if (categories.isNotEmpty()) {
@@ -124,17 +156,51 @@ internal fun LiveTvSettingsContent(viewModel: LiveTvViewModel, initialFocusReque
                 }
             }
         }
-        if (showPlayers) {
-            SettingsSingleChoiceDialog(
+        val dismissPicker = { picker = null }
+        when (picker) {
+            LiveTvPicker.PLAYER -> SettingsSingleChoiceDialog(
                 title = playerTitle,
                 options = players,
                 selectedValue = state.player,
                 onOptionSelected = {
                     viewModel.setPlayer(it)
-                    showPlayers = false
+                    dismissPicker()
                 },
-                onDismiss = { showPlayers = false }
+                onDismiss = dismissPicker
             )
+            LiveTvPicker.AUDIO -> SettingsSingleChoiceDialog(
+                title = audioTitle,
+                subtitle = audioHelp,
+                options = audioOptions,
+                selectedValue = state.stereoPcm,
+                onOptionSelected = {
+                    viewModel.setStereoPcm(it)
+                    dismissPicker()
+                },
+                onDismiss = dismissPicker
+            )
+            LiveTvPicker.HISTORY -> SettingsSingleChoiceDialog(
+                title = historyTitle,
+                subtitle = historyHelp,
+                options = LIVE_TV_GUIDE_HISTORY_DAYS.map { days ->
+                    SettingsPickerOption(days, pluralStringResource(R.plurals.live_tv_history_days, days, days))
+                },
+                selectedValue = state.guideHistoryDays,
+                onOptionSelected = {
+                    viewModel.setGuideHistoryDays(it)
+                    dismissPicker()
+                },
+                onDismiss = dismissPicker
+            )
+            LiveTvPicker.COLOUR -> GuideColourPicker(
+                selected = state.guideColour,
+                onSelect = {
+                    viewModel.setGuideColour(it)
+                    dismissPicker()
+                },
+                onDismiss = dismissPicker
+            )
+            null -> Unit
         }
         if (showCategories && categories.isNotEmpty()) {
             LiveTvCategoriesDialog(
@@ -165,6 +231,26 @@ internal fun LiveTvSettingsContent(viewModel: LiveTvViewModel, initialFocusReque
             XtreamPhoneDialog(it, viewModel::startPhoneSetup, viewModel::savePhonePlaylist, viewModel::closePhoneSetup)
         }
     }
+}
+
+@Composable
+private fun guideColourName(colour: AppTheme?): String =
+    colour?.localizedName() ?: stringResource(R.string.live_tv_guide_profile_colour)
+
+@Composable
+internal fun GuideColourPicker(
+    selected: AppTheme?,
+    onSelect: (AppTheme?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val colours: List<AppTheme?> = listOf(null) + AppTheme.entries.filter { it != AppTheme.CUSTOM }
+    SettingsSingleChoiceDialog(
+        title = stringResource(R.string.live_tv_guide_colour),
+        options = colours.map { SettingsPickerOption(it, guideColourName(it)) },
+        selectedValue = selected,
+        onOptionSelected = onSelect,
+        onDismiss = onDismiss
+    )
 }
 
 @Composable

@@ -21,6 +21,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,6 +39,8 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -63,6 +68,9 @@ import com.nuvio.tv.R
 import com.nuvio.tv.data.livetv.LiveChannel
 import com.nuvio.tv.data.livetv.LiveProgramme
 import com.nuvio.tv.data.livetv.canReplay
+import com.nuvio.tv.domain.model.AppTheme
+import com.nuvio.tv.ui.theme.NuvioTheme
+import com.nuvio.tv.ui.theme.ThemeColors
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -72,14 +80,25 @@ internal const val GUIDE_STEP_MS = 30 * 60_000L
 private val GuideBlack = Color(0xFF090B11)
 internal val GuideRail = Color(0xFF0D1018)
 private val GuideCard = Color(0xFF131B29)
-private val GuideOnAir = Color(0xFF192E4F)
-private val GuideSelected = Color(0xFF3659AD)
-private val GuideFocus = Color(0xFF567FE7)
-internal val GuideAccent = Color(0xFF79ABFF)
-private val GuideLine = Color(0xFF2B80EA)
 internal val GuideMuted = Color(0xFFACB7CB)
 private val GuideText = Color(0xFFF1F5FF)
 private val GuideShape = RoundedCornerShape(6.dp)
+private val LocalGuidePalette = staticCompositionLocalOf { ThemeColors.Ocean }
+
+@Composable
+internal fun LiveTvGuideTheme(colour: AppTheme?, content: @Composable () -> Unit) {
+    val palette = if (colour == null) NuvioTheme.palette else ThemeColors.getColorPalette(colour)
+    CompositionLocalProvider(LocalGuidePalette provides palette, content = content)
+}
+
+internal val GuideAccent: Color
+    @Composable @ReadOnlyComposable get() {
+        val accent = LocalGuidePalette.current.focusRing
+        return if (accent.luminance() < 0.35f) lerp(accent, Color.White, 0.4f) else accent
+    }
+
+internal fun formatGuideDate(time: Long): String =
+    Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("EEE, d MMM"))
 
 internal fun guideTimeFloor(time: Long): Long {
     val local = Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault())
@@ -126,6 +145,8 @@ internal fun LiveTvGuideHeader(
     canGoLater: Boolean,
     categoriesVisible: Boolean,
     onSearch: () -> Unit,
+    onChooseDate: () -> Unit,
+    onChooseColour: () -> Unit,
     onNow: () -> Unit,
     onEarlier: () -> Unit,
     onLater: () -> Unit,
@@ -137,7 +158,9 @@ internal fun LiveTvGuideHeader(
     modifier: Modifier = Modifier
 ) {
     Row(
-        modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(GuideBlack, Color(0xFF10182B))))
+        modifier.fillMaxWidth().background(
+            Brush.horizontalGradient(listOf(GuideBlack, lerp(GuideRail, LocalGuidePalette.current.secondary, 0.1f)))
+        )
             .padding(start = GuideHeaderStart, top = GuideHeaderTop, end = GuideHeaderEnd, bottom = 14.dp),
         horizontalArrangement = Arrangement.spacedBy(GuideHeaderGap),
         verticalAlignment = Alignment.CenterVertically
@@ -186,14 +209,20 @@ internal fun LiveTvGuideHeader(
                     GuideButton("‹", onEarlier, enabled = canGoEarlier, description = stringResource(R.string.live_tv_guide_earlier))
                     GuideButton(stringResource(R.string.live_tv_now), onNow)
                     GuideButton("›", onLater, enabled = canGoLater, description = stringResource(R.string.live_tv_guide_later))
+                    GuideButton(
+                        stringResource(R.string.live_tv_guide_date), onChooseDate,
+                        description = stringResource(R.string.live_tv_guide_choose_date)
+                    )
                 }
+                GuideButton(
+                    stringResource(R.string.live_tv_guide_colour_short), onChooseColour,
+                    description = stringResource(R.string.live_tv_guide_colour)
+                )
                 GuideButton(stringResource(R.string.live_tv_search), onSearch)
                 if (onDismiss != null) GuideButton(stringResource(R.string.live_tv_preview_fullscreen), onDismiss)
             }
             Spacer(Modifier.height(4.dp))
-            val dateLabel = remember(date) {
-                Instant.ofEpochMilli(date).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("EEE, d MMM"))
-            }
+            val dateLabel = remember(date) { formatGuideDate(date) }
             Text(
                 if (channel != null) "${channel.name} · $dateLabel" else dateLabel,
                 color = GuideAccent,
@@ -257,7 +286,7 @@ internal fun GuideButton(
         colors = ButtonDefaults.colors(
             containerColor = GuideCard,
             contentColor = GuideText,
-            focusedContainerColor = GuideFocus,
+            focusedContainerColor = lerp(GuideCard, GuideAccent, 0.35f),
             focusedContentColor = Color.White
         )
     ) {
@@ -296,9 +325,10 @@ internal fun GuideRuler(window: GuideWindow, modifier: Modifier = Modifier) {
 @Composable
 internal fun GuideNowLine(window: GuideWindow, now: Long, modifier: Modifier = Modifier) {
     if (now !in window.start until window.end) return
+    val colour = GuideAccent
     Canvas(modifier.width(window.width).fillMaxHeight()) {
         val x = window.x(now).toPx()
-        drawLine(GuideLine, Offset(x, 0f), Offset(x, size.height), strokeWidth = 2.dp.toPx())
+        drawLine(colour, Offset(x, 0f), Offset(x, size.height), strokeWidth = 2.dp.toPx())
     }
 }
 
@@ -330,6 +360,8 @@ internal fun LiveTvGuideRow(
         if (sportsOnly) items.filter { it.programme != null } else items
     }
     val focusedBlock = blocks.firstOrNull { selectedTime in it.start until it.end }
+    val onAir = lerp(GuideCard, LocalGuidePalette.current.secondary, 0.19f)
+    val selected = lerp(GuideCard, GuideAccent, 0.35f)
     Row(Modifier.fillMaxWidth().height(37.dp), verticalAlignment = Alignment.CenterVertically) {
         Surface(
             onClick = { onSelect(null) },
@@ -349,8 +381,8 @@ internal fun LiveTvGuideRow(
                     }
                 },
             colors = ClickableSurfaceDefaults.colors(
-                containerColor = if (trackFocused) GuideOnAir else GuideRail,
-                focusedContainerColor = GuideOnAir,
+                containerColor = if (trackFocused) onAir else GuideRail,
+                focusedContainerColor = onAir,
                 contentColor = GuideText,
                 focusedContentColor = Color.White
             ),
@@ -412,8 +444,8 @@ internal fun LiveTvGuideRow(
                     val active = trackFocused && block == focusedBlock
                     val colour by animateColorAsState(
                         when {
-                            active -> GuideSelected
-                            block.programme?.isOnAir(now) == true -> GuideOnAir
+                            active -> selected
+                            block.programme?.isOnAir(now) == true -> onAir
                             else -> GuideCard
                         },
                         label = "programme"

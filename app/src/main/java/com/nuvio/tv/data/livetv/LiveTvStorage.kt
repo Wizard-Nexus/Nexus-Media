@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.AtomicFile
 import com.nuvio.tv.core.profile.ProfileScopedCredentialStore
 import com.nuvio.tv.core.profile.ProtectedProfilePreferences
+import com.nuvio.tv.domain.model.AppTheme
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,6 +51,30 @@ internal class LiveTvStorage @Inject constructor(@ApplicationContext context: Co
 
     fun writePlayer(profileId: Int, player: LiveTvPlayer) {
         history.edit().putString("profile.$profileId.player", player.name).apply()
+    }
+
+    fun readGuideHistoryDays(profileId: Int): Int =
+        history.getInt("profile.$profileId.guideHistoryDays", 1).takeIf { it in LIVE_TV_GUIDE_HISTORY_DAYS } ?: 1
+
+    fun writeGuideHistoryDays(profileId: Int, days: Int) {
+        require(days in LIVE_TV_GUIDE_HISTORY_DAYS)
+        history.edit().putInt("profile.$profileId.guideHistoryDays", days).apply()
+    }
+
+    fun readGuideColour(profileId: Int): AppTheme? {
+        val name = history.getString("profile.$profileId.guideColour", null)
+        return AppTheme.entries.firstOrNull { it.name == name && it != AppTheme.CUSTOM }
+    }
+
+    fun writeGuideColour(profileId: Int, colour: AppTheme?) {
+        require(colour != AppTheme.CUSTOM)
+        history.edit().putString("profile.$profileId.guideColour", colour?.name).apply()
+    }
+
+    fun readStereoPcm(profileId: Int): Boolean = history.getBoolean("profile.$profileId.stereoPcm", false)
+
+    fun writeStereoPcm(profileId: Int, enabled: Boolean) {
+        history.edit().putBoolean("profile.$profileId.stereoPcm", enabled).apply()
     }
 
     fun readSource(profileId: Int): XtreamSource? = runCatching {

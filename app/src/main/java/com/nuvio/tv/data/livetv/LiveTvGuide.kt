@@ -6,12 +6,32 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
+import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Base64
 import java.util.Locale
 import java.time.temporal.ChronoUnit
+
+internal val LIVE_TV_GUIDE_HISTORY_DAYS = listOf(1, 3, 5, 7)
+
+internal fun guideHistoryStart(now: Long, days: Int, zone: ZoneId): Long =
+    Instant.ofEpochMilli(now).atZone(zone).toLocalDate().minusDays(days.toLong())
+        .atStartOfDay(zone).toInstant().toEpochMilli()
+
+internal fun earlierGuideDateTargets(
+    schedules: Collection<List<LiveProgramme>>,
+    now: Long,
+    days: Int,
+    zone: ZoneId
+): List<Long> = (1..days).mapNotNull { day ->
+    val start = guideHistoryStart(now, day, zone)
+    val end = guideHistoryStart(now, day - 1, zone)
+    schedules.mapNotNull { schedule ->
+        schedule.firstOrNull { it.endsAt > start && it.startsAt < end }?.startsAt
+    }.minOrNull()?.coerceAtLeast(start)
+}
 
 internal data class LiveProgramme(
     val title: String,

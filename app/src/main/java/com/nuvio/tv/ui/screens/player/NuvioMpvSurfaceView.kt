@@ -426,16 +426,15 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
     }
 
     /**
-     * Bluetooth A2DP/LE cannot carry encoded passthrough. Force a stereo PCM mix.
-     * Mid-session route changes pass [reloadOutput] so AudioTrack follows the new device
-     * without restarting video.
+     * Use stereo PCM for Bluetooth or the Live TV compatibility setting.
+     * Mid-session route changes reload AudioTrack without restarting video.
      */
-    fun applyBluetoothAudioRoute(isBluetooth: Boolean, reloadOutput: Boolean = false) {
+    fun applyPcmAudioOutput(forceStereo: Boolean, reloadOutput: Boolean = false) {
         if (!initialized) return
         val wasPaused = !isPlayingNow()
         runCatching {
-            mpv.setPropertyString("audio-channels", MpvBluetoothAudioPolicy.audioChannels(isBluetooth))
-            if (MpvBluetoothAudioPolicy.shouldClearAudioSpdif(isBluetooth)) {
+            mpv.setPropertyString("audio-channels", MpvBluetoothAudioPolicy.audioChannels(forceStereo))
+            if (MpvBluetoothAudioPolicy.shouldClearAudioSpdif(forceStereo)) {
                 mpv.setPropertyString("audio-spdif", "")
             }
             if (reloadOutput) {
@@ -445,7 +444,7 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
                 }
             }
         }.onFailure {
-            Log.w(TAG, "Failed to apply bluetooth audio route on mpv (bt=$isBluetooth): ${it.message}")
+            Log.w(TAG, "Failed to configure mpv PCM audio output (stereo=$forceStereo): ${it.message}")
         }
     }
 

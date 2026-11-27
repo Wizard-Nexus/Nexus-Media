@@ -253,7 +253,8 @@ internal fun PlayerRuntimeController.initializePlayer(
                     "Tunneled playback skipped: media audio goes to USB (route=${currentAudioOutputRoute?.key})"
                 )
             }
-            val tunnelingActive = playerSettings.effectiveTunnelingEnabled && !tunnelingBlockedByUsbAudio
+            val tunnelingActive = playerSettings.effectiveTunnelingEnabled &&
+                !tunnelingBlockedByUsbAudio && !stereoPcmForLiveTv
             if (rememberAudioDelayPerDeviceEnabled) {
                 applyStoredAudioDelayForCurrentRouteIfEnabled()
             }
@@ -904,7 +905,8 @@ internal fun PlayerRuntimeController.initializePlayer(
             val isBluetoothAudioOutput = currentAudioOutputRoute?.isBluetooth == true ||
                 AudioOutputRouteDetector.isBluetoothMediaOutput(context)
             // Force-optical must never win over Bluetooth: AC3/DTS AudioTrack to A2DP fails hard.
-            val isForcePassthroughActive = !isBluetoothAudioOutput &&
+            val forceStereoPcm = isBluetoothAudioOutput || stereoPcmForLiveTv
+            val isForcePassthroughActive = !forceStereoPcm &&
                 playerSettings.forceOpticalPassthrough &&
                 playerSettings.decoderPriority != 0
             // Prefer FFmpeg/extension audio decoder on BT so multi-channel TrueHD/DTS always
@@ -912,19 +914,20 @@ internal fun PlayerRuntimeController.initializePlayer(
             val effectiveDecoderPriority = if (
                 hasTriedAudioPcmFallback ||
                 isForcePassthroughActive ||
-                isBluetoothAudioOutput
+                forceStereoPcm
             ) {
                 DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
             } else {
                 playerSettings.decoderPriority
             }
-            // A2DP is stereo; force a clean 2.0 downmix so surround content is audible and balanced.
-            val bluetoothStereoDownmix = isBluetoothAudioOutput
-            val effectiveDownmixEnabled = playerSettings.effectiveDownmixEnabled || bluetoothStereoDownmix
-            val effectiveAudioOutputChannels = if (bluetoothStereoDownmix) {
+            val effectiveDownmixEnabled = playerSettings.effectiveDownmixEnabled || forceStereoPcm
+            val effectiveAudioOutputChannels = if (forceStereoPcm) {
                 com.nuvio.tv.data.local.AudioOutputChannels.CHANNELS_2_0
             } else {
                 playerSettings.audioOutputChannels
+            }
+            if (stereoPcmForLiveTv) {
+                Log.i(PlayerRuntimeController.TAG, "Live TV stereo PCM output enabled")
             }
             nightModeAudioProcessor.setMode(playerSettings.nightMode)
             if (isBluetoothAudioOutput) {
@@ -962,9 +965,10 @@ internal fun PlayerRuntimeController.initializePlayer(
                 downmixLfeLevel = playerSettings.downmixLfeLevel.level,
                 forceOpticalPassthrough = isForcePassthroughActive,
                 bluetoothForcePcm = isBluetoothAudioOutput,
+                stereoPcmForLiveTv = stereoPcmForLiveTv,
                 playbackSpeedProvider = { _uiState.value.playbackSpeed },
-                initialForcePcm = hasTriedAudioPcmFallback || isBluetoothAudioOutput,
-                preferSoftwareAudioOnly = isBluetoothAudioOutput,
+                initialForcePcm = hasTriedAudioPcmFallback || forceStereoPcm,
+                preferSoftwareAudioOnly = forceStereoPcm,
                 mapDv7ToHevc = mapDv7ToHevcEnabled,
                 onPlaybackSpeedAwareAudioSinkCreated = { playbackSpeedAwareAudioSink = it },
                 onFfmpegAudioRendererChanged = { renderer ->
@@ -2261,6 +2265,7 @@ private class SubtitleOffsetRenderersFactory(
     private val downmixLfeLevel: Float,
     private val forceOpticalPassthrough: Boolean,
     private val bluetoothForcePcm: Boolean = false,
+    private val stereoPcmForLiveTv: Boolean = false,
     private val playbackSpeedProvider: () -> Float,
     private val initialForcePcm: Boolean = false,
     /**
@@ -2329,6 +2334,10 @@ private class SubtitleOffsetRenderersFactory(
         // cannot advertise AC3/DTS passthrough while audio is routed to A2DP.
         // Non-BT optical: pin expanded capabilities. Otherwise keep live Builder(context).
         val builder = when {
+            stereoPcmForLiveTv -> {
+                DefaultAudioSink.Builder()
+                    .setAudioCapabilities(AudioCapabilities(intArrayOf(C.ENCODING_PCM_16BIT), 2))
+            }
             bluetoothForcePcm -> {
                 DefaultAudioSink.Builder()
                     .setAudioCapabilities(AudioOutputRouteDetector.bluetoothPcmOnlyCapabilities())

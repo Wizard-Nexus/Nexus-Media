@@ -3,6 +3,7 @@ package com.nuvio.tv.ui.screens.livetv
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.KeyEvent
 import android.view.SurfaceView
 import android.view.ViewGroup
@@ -143,7 +144,7 @@ internal fun LiveTvVlcScreen(
     }
 
     LaunchedEffect(channelId, state.sourceKey) { viewModel.requestGuide(listOf(channelId)) }
-    LaunchedEffect(layout, foreground, streamUrl, retry, state.loading && current == null) {
+    LaunchedEffect(layout, foreground, streamUrl, retry, state.loading && current == null, state.stereoPcm) {
         val surface = layout ?: return@LaunchedEffect
         if (!foreground) return@LaunchedEffect
         if (streamUrl == null) {
@@ -164,9 +165,14 @@ internal fun LiveTvVlcScreen(
                     library = vlc
                     val player = MediaPlayer(vlc)
                     engine = player
+                    val audioDevice = if (state.stereoPcm) "stereo" else "pcm"
+                    if (!player.setAudioOutput("android_audiotrack") || !player.setAudioOutputDevice(audioDevice)) {
+                        Log.w("LiveTvVlc", "Could not configure the requested PCM audio output")
+                    }
                     val media = Media(vlc, Uri.parse(streamUrl))
                     try {
                         media.setHWDecoderEnabled(true, false)
+                        media.addOption(":network-caching=750")
                         player.media = media
                     } finally {
                         media.release()

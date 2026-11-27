@@ -374,7 +374,7 @@ internal fun PlayerRuntimeController.observeSubtitleSettings() {
                     internalPlayerEngine = resolvedInternalPlayerEngine,
                     frameRateMatchingMode = settings.frameRateMatchingMode,
                     tunnelingEnabled = settings.effectiveTunnelingEnabled &&
-                            !tunnelingBlockedByUsbAudio &&
+                            !tunnelingBlockedByUsbAudio && !stereoPcmForLiveTv &&
                             resolvedInternalPlayerEngine != InternalPlayerEngine.MVP_PLAYER,
                     persistAudioAmplification = settings.persistAudioAmplification,
                     audioAmplificationDb = resolvedAudioAmplificationDb,

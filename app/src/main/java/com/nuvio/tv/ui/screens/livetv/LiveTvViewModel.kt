@@ -26,6 +26,7 @@ import com.nuvio.tv.data.livetv.XtreamClient
 import com.nuvio.tv.data.livetv.XtreamException
 import com.nuvio.tv.data.livetv.XtreamProblem
 import com.nuvio.tv.data.livetv.XtreamSource
+import com.nuvio.tv.domain.model.AppTheme
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -52,6 +53,9 @@ import javax.inject.Inject
 internal data class LiveTvState(
     val profileId: Int,
     val player: LiveTvPlayer = LiveTvPlayer.DEFAULT,
+    val guideHistoryDays: Int = 1,
+    val guideColour: AppTheme? = null,
+    val stereoPcm: Boolean = false,
     val catalog: XtreamCatalog? = null,
     val sourceKey: String? = null,
     val hasSource: Boolean = false,
@@ -141,6 +145,9 @@ internal class LiveTvViewModel @Inject constructor(
                 source to LiveTvState(
                     profileId = id,
                     player = storage.readPlayer(id),
+                    guideHistoryDays = storage.readGuideHistoryDays(id),
+                    guideColour = storage.readGuideColour(id),
+                    stereoPcm = storage.readStereoPcm(id),
                     catalog = source?.let { storage.readCatalog(id, it) },
                     sourceKey = source?.cacheKey,
                     history = source?.let { storage.readHistory(id, it) } ?: LiveTvHistory(),
@@ -224,6 +231,24 @@ internal class LiveTvViewModel @Inject constructor(
         _state.update { it.copy(player = player) }
     }
 
+    fun setGuideHistoryDays(days: Int) {
+        val active = currentProfile() ?: return
+        storage.writeGuideHistoryDays(active.id, days)
+        _state.update { it.copy(guideHistoryDays = days) }
+    }
+
+    fun setGuideColour(colour: AppTheme?) {
+        val active = currentProfile() ?: return
+        storage.writeGuideColour(active.id, colour)
+        _state.update { it.copy(guideColour = colour) }
+    }
+
+    fun setStereoPcm(enabled: Boolean) {
+        val active = currentProfile() ?: return
+        storage.writeStereoPcm(active.id, enabled)
+        _state.update { it.copy(stereoPcm = enabled) }
+    }
+
     fun updateCategories(sourceKey: String?, update: (LiveTvCategories) -> LiveTvCategories) {
         val active = currentProfile() ?: return
         val source = active.source?.takeIf { it.cacheKey == sourceKey } ?: return
@@ -251,7 +276,16 @@ internal class LiveTvViewModel @Inject constructor(
             active.loadingGuide.clear()
             active.pendingFullGuide.clear()
             withContext(Dispatchers.IO) { storage.clearCatalog(active.id) }
-            _state.value = LiveTvState(active.id, player = _state.value.player, loading = false)
+            _state.update { current ->
+                LiveTvState(
+                    profileId = active.id,
+                    player = current.player,
+                    guideHistoryDays = current.guideHistoryDays,
+                    guideColour = current.guideColour,
+                    stereoPcm = current.stereoPcm,
+                    loading = false
+                )
+            }
         }
     }
 

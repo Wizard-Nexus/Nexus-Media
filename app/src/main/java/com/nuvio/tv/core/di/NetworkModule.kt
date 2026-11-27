@@ -21,8 +21,6 @@ import com.nuvio.tv.data.remote.api.PremiumizeApi
 import com.nuvio.tv.data.remote.api.RealDebridApi
 import com.nuvio.tv.data.remote.api.SeriesGraphApi
 import com.nuvio.tv.data.remote.api.TmdbApi
-import com.nuvio.tv.core.tmdb.TmdbCredentialInterceptor
-import com.nuvio.tv.core.tmdb.TmdbCredentialStore
 import com.nuvio.tv.data.remote.api.TorboxApi
 import com.nuvio.tv.data.remote.api.UniqueContributionsApi
 import com.nuvio.tv.data.simkl.OkHttpSimklEngine
@@ -317,21 +315,10 @@ object NetworkModule {
     @Provides
     @Singleton
     @Named("tmdb")
-    fun provideTmdbRetrofit(
-        okHttpClient: OkHttpClient,
-        moshi: Moshi,
-        credentials: TmdbCredentialStore
-    ): Retrofit =
+    fun provideTmdbRetrofit(okHttpClient: OkHttpClient, moshi: Moshi): Retrofit =
         Retrofit.Builder()
             .baseUrl("https://api.themoviedb.org/3/")
-            .client(
-                okHttpClient.newBuilder()
-                    // TMDB v3 keys are query parameters, so skip request URL logging and disk HTTP caching.
-                    .apply { interceptors().removeAll { it is HttpLoggingInterceptor || it is SentryNetworkBreadcrumbInterceptor } }
-                    .cache(null)
-                    .addInterceptor(TmdbCredentialInterceptor(credentials::localKey))
-                    .build()
-            )
+            .client(okHttpClient)
             .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
 

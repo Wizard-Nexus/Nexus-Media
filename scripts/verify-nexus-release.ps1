@@ -53,6 +53,7 @@ if ($SmallApks) {
 }
 Push-Location -LiteralPath $Source
 $originalPath = $env:Path
+$originalTmdbKey = $env:NEXUS_TMDB_API_KEY
 # AGP adds PATH entries to java.library.path for JVM unit tests.
 $env:Path = @(
     (Join-Path $env:JAVA_HOME 'bin')
@@ -61,6 +62,18 @@ $env:Path = @(
     (Join-Path $env:ProgramFiles 'Git/cmd')
 ) -join ';'
 try {
+    $tmdbKeyFile = Join-Path $Repo '.nexus-signing/tmdb-api-key.dpapi'
+    if (Test-Path -LiteralPath $tmdbKeyFile -PathType Leaf) {
+        $secureTmdbKey = ConvertTo-SecureString ((Get-Content -LiteralPath $tmdbKeyFile -Raw).Trim())
+        try {
+            $env:NEXUS_TMDB_API_KEY = [Net.NetworkCredential]::new('', $secureTmdbKey).Password
+            if ($env:NEXUS_TMDB_API_KEY -cnotmatch '^[0-9a-f]{32}$') {
+                throw 'The configured TMDB application key has an invalid format.'
+            }
+        } finally {
+            $secureTmdbKey.Dispose()
+        }
+    }
     $gradleArguments = @(
         '--init-script', $init, '--daemon', '--build-cache', '--console=plain', '--configure-on-demand', '--max-workers=1',
         '-PnexusUniversalApk=true', '-Pkotlin.compiler.execution.strategy=in-process',
@@ -71,6 +84,7 @@ try {
     ) + $sizeArguments
     Invoke-Checked (Join-Path $Source 'gradlew.bat') $gradleArguments
 } finally {
+    $env:NEXUS_TMDB_API_KEY = $originalTmdbKey
     $env:Path = $originalPath
     Pop-Location
 }

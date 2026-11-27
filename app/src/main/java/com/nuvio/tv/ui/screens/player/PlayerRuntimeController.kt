@@ -113,6 +113,7 @@ class PlayerRuntimeController(
     internal val usenetSourceSettings: com.nuvio.tv.core.usenet.UsenetSourceSettings,
     internal val party: com.nuvio.tv.core.party.PartyRepository,
     internal val profileId: Int,
+    internal val stereoPcmForLiveTv: Boolean,
     internal val savedStateHandle: SavedStateHandle,
     internal val scope: CoroutineScope
 ) {

@@ -50,7 +50,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 @HiltViewModel
-class PlayerViewModel @Inject constructor(
+class PlayerViewModel @Inject internal constructor(
     @ApplicationContext private val context: Context,
     private val watchProgressRepository: WatchProgressRepository,
     private val metaRepository: MetaRepository,
@@ -105,7 +105,8 @@ class PlayerViewModel @Inject constructor(
     private val usenetSourceSettings: com.nuvio.tv.core.usenet.UsenetSourceSettings,
     partyRepository: com.nuvio.tv.core.party.PartyRepository,
     profileManager: com.nuvio.tv.core.profile.ProfileManager,
-    savedStateHandle: SavedStateHandle
+    savedStateHandle: SavedStateHandle,
+    liveTvStorage: com.nuvio.tv.data.livetv.LiveTvStorage
 ) : ViewModel() {
 
     init {
@@ -113,6 +114,9 @@ class PlayerViewModel @Inject constructor(
         // claim hardware decoders without contention (prevents black screen).
         trailerPlayerPool.yield()
     }
+
+    private val playbackProfileId = savedStateHandle.get<String>("profileId")?.toIntOrNull()
+        ?: profileManager.activeProfileId.value
 
     internal val controller = PlayerRuntimeController(
         context = context,
@@ -155,8 +159,9 @@ class PlayerViewModel @Inject constructor(
         serverStreams = serverStreams,
         usenetSourceSettings = usenetSourceSettings,
         party = partyRepository,
-        profileId = savedStateHandle.get<String>("profileId")?.toIntOrNull()
-            ?: profileManager.activeProfileId.value,
+        profileId = playbackProfileId,
+        stereoPcmForLiveTv = savedStateHandle.get<String>("liveChannelId")?.toLongOrNull() != null &&
+            liveTvStorage.readStereoPcm(playbackProfileId),
         savedStateHandle = savedStateHandle,
         scope = viewModelScope
     )

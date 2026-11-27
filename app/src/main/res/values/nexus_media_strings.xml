@@ -128,16 +128,21 @@
     <string name="live_tv_recording_missed">Missed</string>
     <string name="live_tv_recording_starting">Starting recording…</string>
     <string name="live_tv_recording_entry_subtitle">%1$s · %2$s · %3$s</string>
-    <string name="nexus_tmdb_key_title">TMDB API key</string>
-    <string name="nexus_tmdb_key_help">Connect your TMDB v3 API key for cast, crew, and other movie and series details on this TV.</string>
-    <string name="nexus_tmdb_key_placeholder">Enter your TMDB v3 API key</string>
-    <string name="nexus_tmdb_key_connected">Connected</string>
-    <string name="nexus_tmdb_key_missing">Setup needed</string>
-    <string name="nexus_tmdb_key_save">Connect</string>
-    <string name="nexus_tmdb_key_remove">Remove key</string>
-    <string name="nexus_tmdb_key_verifying">Checking the TMDB connection…</string>
-    <string name="nexus_tmdb_key_invalid">TMDB didn’t accept that key. Check the API Key (v3 auth) in your TMDB account.</string>
-    <string name="nexus_tmdb_key_connection_error">Couldn’t reach TMDB. Check your connection and try again.</string>
-    <string name="nexus_tmdb_key_save_error">Couldn’t save the TMDB key on this device.</string>
-    <string name="nexus_tmdb_key_settings_error">The key change was saved. Use the TMDB toggle to update this profile.</string>
+    <string name="live_tv_guide_history">Guide history</string>
+    <string name="live_tv_guide_history_help">How many previous days to show when your provider supplies listings.</string>
+    <plurals name="live_tv_history_days">
+        <item quantity="one">%d day</item>
+        <item quantity="other">%d days</item>
+    </plurals>
+    <string name="live_tv_guide_date">Date</string>
+    <string name="live_tv_guide_choose_date">Jump to date</string>
+    <string name="live_tv_guide_today">Today</string>
+    <string name="live_tv_guide_no_history">No earlier listings are available for these channels.</string>
+    <string name="live_tv_guide_colour">Guide colour</string>
+    <string name="live_tv_guide_colour_short">Colour</string>
+    <string name="live_tv_guide_profile_colour">Match profile</string>
+    <string name="live_tv_audio_output">Audio output</string>
+    <string name="live_tv_audio_output_help">Try stereo PCM if Live TV audio clicks or drops out over HDMI or optical.</string>
+    <string name="live_tv_audio_automatic">Automatic</string>
+    <string name="live_tv_audio_stereo_pcm">Stereo PCM</string>
 </resources>
