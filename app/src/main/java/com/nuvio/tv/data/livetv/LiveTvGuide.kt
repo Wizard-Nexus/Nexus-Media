@@ -125,8 +125,12 @@ internal fun LiveProgramme.canRequestStartOver(channel: LiveChannel, now: Long):
 
 internal fun LiveProgramme.canReplay(channel: LiveChannel, now: Long): Boolean {
     if (endsAt > now || hasArchive == false) return false
-    if (channel.archiveDays <= 0) return hasArchive == true
-    return now - startsAt <= channel.archiveDays.toLong() * 86_400_000L
+    if (channel.archiveDays <= 0 && hasArchive == true) return true
+    if (channel.archiveDays <= 0 && !channel.archiveEnabled) return false
+
+    // Some providers serve replays beyond the duration advertised for the channel.
+    val replayDays = maxOf(channel.archiveDays, 3)
+    return now - startsAt <= replayDays * 86_400_000L
 }
 
 internal fun List<LiveProgramme>.nowAndNext(now: Long): Pair<LiveProgramme?, LiveProgramme?> =

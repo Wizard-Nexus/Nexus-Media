@@ -66,6 +66,30 @@ class LiveTvGuideHistoryTest {
     }
 
     @Test
+    fun triesReplayingCachedProgrammesBeyondTheAdvertisedWindowForUpToThreeDays() {
+        val channel = LiveChannel(31, "Sports", "Arena", archiveDays = 2)
+        val start = now - 71 * 3_600_000L
+        val programme = LiveProgramme("Earlier game", start, start + 3_600_000L)
+        val refreshed = mergeGuideHistory(listOf(programme), listOf(on(0)), guideHistoryStart(now, 3, zone))
+
+        assertEquals(programme, refreshed.first())
+        assertTrue(refreshed.first().canReplay(channel, now))
+        assertTrue(programme.canReplay(channel, start + 3 * 86_400_000L))
+        assertFalse(programme.canReplay(channel, start + 3 * 86_400_000L + 1))
+    }
+
+    @Test
+    fun replayFallbackRequiresArchiveSupportAndKeepsLongerAdvertisedWindows() {
+        val channel = LiveChannel(31, "Sports", "Arena")
+        val programme = on(2)
+        assertFalse(programme.canReplay(channel, now))
+        assertTrue(programme.canReplay(channel.copy(archiveEnabled = true), now))
+        assertFalse(programme.copy(hasArchive = false).canReplay(channel.copy(archiveDays = 2), now))
+        assertTrue(on(6).canReplay(channel.copy(archiveDays = 7), now))
+        assertTrue(on(6).copy(hasArchive = true).canReplay(channel, now))
+    }
+
+    @Test
     fun searchesTeamNamesInRecentCachedProgrammes() {
         val sports = LiveChannel(31, "Sport One", "Sport")
         val hidden = LiveChannel(32, "Hidden Sport", "Hidden")
