@@ -6,6 +6,11 @@ import androidx.media3.exoplayer.SeekParameters
 import com.nuvio.tv.ui.screens.livetv.LiveTvSeekWindow
 import com.nuvio.tv.ui.screens.livetv.LiveTvVideoSample
 
+internal val PlayerRuntimeController.isLiveTvStartOver: Boolean
+    get() = navigationArgs.startFromBeginning &&
+        LivePlaybackUiPolicy.isLiveContentType(contentType) &&
+        savedStateHandle.get<String>("liveChannelId")?.toLongOrNull() != null
+
 internal fun PlayerRuntimeController.liveTvVideoSample(): LiveTvVideoSample? {
     if (isUsingMpvEngine()) {
         val view = mpvView ?: return null
@@ -23,10 +28,11 @@ internal fun PlayerRuntimeController.liveTvVideoSample(): LiveTvVideoSample? {
 
 internal fun PlayerRuntimeController.liveTvSeekWindow(): LiveTvSeekWindow? {
     if (!LivePlaybackUiPolicy.isLiveContentType(contentType) || _uiState.value.error != null) return null
-    val startOver = savedStateHandle.get<String>("startFromBeginning") == "true"
+    val startOver = isLiveTvStartOver
     if (isUsingMpvEngine()) {
         val view = mpvView ?: return null
-        if (!startOver) return view.cachedLiveTvWindow()
+        if (!startOver || view.isLiveStreamNow()) return view.cachedLiveTvWindow()
+        if (!view.isPositionFromRequestedMedia()) return null
         return view.durationMs().takeIf { it > 0L }?.let { LiveTvSeekWindow(0L, it, view.currentPositionMs()) }
     }
     val player = exoPlayer ?: return null
@@ -41,11 +47,13 @@ internal fun PlayerRuntimeController.liveTvSeekWindow(): LiveTvSeekWindow? {
 internal fun PlayerRuntimeController.seekLiveTvBy(deltaMs: Long) {
     val window = liveTvSeekWindow()
     if (window != null) {
-        val target = window.seekBy(deltaMs)
-        if (target == window.edgeMs && !isUsingMpvEngine() && deltaMs > 0) {
-            exoPlayer?.seekTo(target)
-        } else if (target != window.positionMs) {
-            seekPlaybackTo(target)
+        val replay = isLiveTvStartOver
+        val target = window.seekBy(deltaMs, keepReplayTail = replay)
+        when {
+            target == window.positionMs -> Unit
+            replay -> seekPlaybackTo(target, SeekParameters.EXACT, exact = true)
+            target == window.edgeMs && !isUsingMpvEngine() && deltaMs > 0 -> exoPlayer?.seekTo(target)
+            else -> seekPlaybackTo(target)
         }
     }
     if (_uiState.value.showControls) showControlsTemporarily() else showSeekOverlayTemporarily()

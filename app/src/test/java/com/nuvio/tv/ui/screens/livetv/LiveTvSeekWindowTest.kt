@@ -16,6 +16,15 @@ class LiveTvSeekWindowTest {
     }
 
     @Test
+    fun replaySeekKeepsTheLastSecondPlayable() {
+        val window = LiveTvSeekWindow(startMs = 0L, edgeMs = 120_000L, positionMs = 110_000L)
+        assertEquals(119_000L, window.seekBy(10_000L, keepReplayTail = true))
+        assertEquals(115_000L, window.seekBy(5_000L, keepReplayTail = true))
+        assertEquals(100_000L, window.seekBy(-10_000L, keepReplayTail = true))
+        assertEquals(119_500L, window.copy(positionMs = 119_500L).seekBy(10_000L, keepReplayTail = true))
+    }
+
+    @Test
     fun programmeStartUsesTheTimestampOnTheLiveWindowWhenAvailable() {
         val window = LiveTvSeekWindow(0L, 120_000L, 98_000L, startWallTimeMs = 1_700_000_000_000L)
         assertEquals(60_000L, window.programmeStart(1_700_000_060_000L, 1_700_000_130_000L))

@@ -341,11 +341,12 @@ internal fun shouldResetPostPlayStateAfterPlaybackEnded(
 internal fun shouldTreatAsNaturalPlaybackCompletion(
     hasRenderedFirstFrame: Boolean,
     hasFatalError: Boolean,
-    durationMs: Long
+    durationMs: Long,
+    isLiveTvStartOver: Boolean = false
 ): Boolean {
     if (hasFatalError) return false
     if (!hasRenderedFirstFrame) return false
-    if (isShortPlaceholderDuration(durationMs)) return false
+    if (!isLiveTvStartOver && isShortPlaceholderDuration(durationMs)) return false
     return true
 }
 
@@ -435,10 +436,12 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                     val eofNow = view.isEofReached()
                     if (!eofNow) mpvEofSeenClear = true
                     val mpvEofReached = mpvEofSeenClear && eofNow
-                    val naturalEnded = !view.isLiveStreamNow() && (nearEnd || mpvEofReached) && shouldTreatAsNaturalPlaybackCompletion(
+                    val reachedEnd = mpvEofReached || (nearEnd && !isLiveTvStartOver)
+                    val naturalEnded = !view.isLiveStreamNow() && reachedEnd && shouldTreatAsNaturalPlaybackCompletion(
                         hasRenderedFirstFrame = firstFrameReady,
                         hasFatalError = !_uiState.value.error.isNullOrBlank(),
-                        durationMs = effectiveDuration
+                        durationMs = effectiveDuration,
+                        isLiveTvStartOver = isLiveTvStartOver
                     )
                     val wasEnded = _uiState.value.playbackEnded
                     _uiState.update { state ->
@@ -613,7 +616,8 @@ internal fun PlayerRuntimeController.checkExoPlaybackOverrun(
     val naturalEnded = shouldTreatAsNaturalPlaybackCompletion(
         hasRenderedFirstFrame = hasRenderedFirstFrame,
         hasFatalError = !_uiState.value.error.isNullOrBlank(),
-        durationMs = maxOf(durationMs, lastKnownDuration)
+        durationMs = maxOf(durationMs, lastKnownDuration),
+        isLiveTvStartOver = isLiveTvStartOver
     )
     if (!naturalEnded) return
     // Stop the runaway clock. The completion scrobble below clears the active
@@ -917,7 +921,8 @@ internal fun PlayerRuntimeController.handleNaturalPlaybackEnded() {
     if (!shouldTreatAsNaturalPlaybackCompletion(
             hasRenderedFirstFrame = hasRenderedFirstFrame,
             hasFatalError = hasFatalError,
-            durationMs = duration
+            durationMs = duration,
+            isLiveTvStartOver = isLiveTvStartOver
         )
     ) {
         Log.i(

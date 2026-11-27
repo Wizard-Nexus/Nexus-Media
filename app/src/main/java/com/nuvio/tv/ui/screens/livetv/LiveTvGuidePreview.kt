@@ -2,7 +2,7 @@ package com.nuvio.tv.ui.screens.livetv
 
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -77,6 +77,7 @@ internal fun BoxScope.LiveTvPreviewStatus(@StringRes message: Int) {
 }
 
 
+private val ChannelLoadingZoomEasing = CubicBezierEasing(.37f, 0f, .63f, 1f)
 private val ChannelLoadingBackdrop = Brush.radialGradient(listOf(Color(0xFF1E293C), Color(0xFF080B10)))
 
 @Composable
@@ -101,10 +102,10 @@ internal fun LiveTvChannelLoading(visible: Boolean, channel: LiveChannel?) {
                 LoadingIndicator()
             } else {
                 val zoom = rememberInfiniteTransition(label = "channel opening").animateFloat(
-                    initialValue = .93f,
-                    targetValue = 1.08f,
+                    initialValue = .96f,
+                    targetValue = 1.04f,
                     animationSpec = infiniteRepeatable(
-                        animation = tween(1_200, easing = FastOutSlowInEasing),
+                        animation = tween(1_650, easing = ChannelLoadingZoomEasing),
                         repeatMode = RepeatMode.Reverse
                     ),
                     label = "logo scale"

@@ -44,6 +44,12 @@ class NaturalPlaybackCompletionRulesTest {
     }
 
     @Test
+    fun `short start over replay can end after playing video`() {
+        assertTrue(shouldTreatAsNaturalPlaybackCompletion(true, false, 30_000L, isLiveTvStartOver = true))
+        assertFalse(shouldTreatAsNaturalPlaybackCompletion(false, false, 30_000L, isLiveTvStartOver = true))
+    }
+
+    @Test
     fun `just over placeholder threshold is natural completion`() {
         assertTrue(
             shouldTreatAsNaturalPlaybackCompletion(

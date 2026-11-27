@@ -1,5 +1,6 @@
 package com.nuvio.tv.data.livetv
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
@@ -22,8 +23,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
@@ -37,7 +38,7 @@ class LiveTvRecordingService : Service() {
     @Inject internal lateinit var recordings: LiveTvRecordings
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val captureLock = Mutex()
+    private val captureSlots = Semaphore(MAX_SIMULTANEOUS_RECORDINGS)
     private var pending = 0
     private var newestStart = 0
 
@@ -49,7 +50,7 @@ class LiveTvRecordingService : Service() {
         // The alarm may be starting us while there is no activity in the foreground.
         val foreground = runCatching {
             ServiceCompat.startForeground(
-                this, NOTIFICATION_ID, notification(getString(R.string.live_tv_recording_starting)),
+                this, NOTIFICATION_ID, notification(),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
             )
         }.isSuccess
@@ -57,13 +58,15 @@ class LiveTvRecordingService : Service() {
         scope.launch {
             try {
                 if (id != null) {
-                    if (foreground) captureLock.withLock { capture(id) }
+                    if (foreground) captureSlots.withPermit { capture(id) }
                     else withContext(Dispatchers.IO) { recordings.failedToStart(id) }
                 }
             } finally {
                 if (--pending == 0) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelfResult(newestStart)
+                } else if (foreground) {
+                    updateNotification()
                 }
             }
         }
@@ -86,10 +89,11 @@ class LiveTvRecordingService : Service() {
                 .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NexusMedia:recording")
             try {
                 wakeLock.acquire((entry.endsAt - startedAt).coerceAtLeast(1_000L) + STALL_TIMEOUT_MS)
-                getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(entry.title))
+                updateNotification()
                 val destination = recordings.captureFile(id)
                 val parent = checkNotNull(destination.parentFile)
-                if ((!parent.isDirectory && !parent.mkdirs()) || parent.usableSpace < MIN_FREE_BYTES) return@withContext
+                if (!parent.isDirectory) parent.mkdirs()
+                if (!parent.isDirectory || parent.usableSpace < MIN_FREE_BYTES) return@withContext
                 val url = recordings.streamFor(entry) ?: return@withContext
                 completed = writeTransportStream(entry, url, destination, parent) &&
                     startedAt - entry.startsAt <= START_GRACE_MS
@@ -159,13 +163,25 @@ class LiveTvRecordingService : Service() {
         }
     }
 
-    private fun notification(detail: String) = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL)
-        .setSmallIcon(R.drawable.ic_launcher)
-        .setContentTitle(getString(R.string.live_tv_recordings))
-        .setContentText(detail)
-        .setOnlyAlertOnce(true)
-        .setOngoing(true)
-        .build()
+    private fun updateNotification() {
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification())
+    }
+
+    private fun notification(): Notification {
+        val active = recordings.entries.value.filter { it.status.active }
+        val detail = when (active.size) {
+            0 -> getString(R.string.live_tv_recording_starting)
+            1 -> active.single().title
+            else -> resources.getQuantityString(R.plurals.live_tv_recordings_active, active.size, active.size)
+        }
+        return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL)
+            .setSmallIcon(R.drawable.ic_launcher)
+            .setContentTitle(getString(R.string.live_tv_recordings))
+            .setContentText(detail)
+            .setOnlyAlertOnce(true)
+            .setOngoing(true)
+            .build()
+    }
 
     override fun onCreate() {
         super.onCreate()

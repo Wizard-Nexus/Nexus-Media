@@ -292,14 +292,9 @@ internal fun PlayerScreen(
     fun switchChannel(channel: LiveChannel, list: List<LiveChannel>? = null, browse: Bundle? = null): Boolean =
         liveTvControls?.onTune?.invoke(channel, list, browse, viewModel::stopAndRelease) == true
 
-    val returnToLive = if (liveControlsAvailable && liveTvControls?.startOver == true) {
-        channelIndex[liveTvControls.currentId]?.let { channel ->
-            {
-                switchChannel(channel)
-                Unit
-            }
-        }
-    } else null
+    val replayChannel = liveTvControls?.takeIf { liveControlsAvailable && it.startOver }
+        ?.let { channelIndex[it.currentId] }
+    val returnToLive: (() -> Unit)? = replayChannel?.let { channel -> { switchChannel(channel) } }
 
     fun showFullscreen() {
         showLiveGuide = false
@@ -561,6 +556,7 @@ internal fun PlayerScreen(
                 viewModel.consumePendingExitReason()
             }
             shouldDispatchNatural -> {
+                if (replayChannel != null && switchChannel(replayChannel)) return@LaunchedEffect
                 viewModel.stopAndRelease()
                 val next = uiState.nextEpisode?.takeIf {
                     it.hasAired && !(it.released.isNullOrBlank() && it.available == false)
@@ -1999,7 +1995,7 @@ internal fun PlayerScreen(
             if (liveTvControls != null) {
                 val window by rememberLiveTvSeekWindow(seekOverlayVisible, viewModel, viewModel::readLiveTvSeekWindow)
                 val timeline by viewModel.playbackTimeline.collectAsState()
-                LiveTvSeekFeedback(window, timeline.watchedDurationMs)
+                LiveTvSeekFeedback(window, timeline.watchedDurationMs, replay = liveTvControls.startOver)
             } else {
                 SeekOverlayHost(
                     viewModel = viewModel,

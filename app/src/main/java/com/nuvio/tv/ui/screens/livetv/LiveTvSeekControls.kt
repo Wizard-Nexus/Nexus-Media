@@ -157,14 +157,26 @@ private fun LiveTvPlaybackButton(label: String, onClick: () -> Unit, modifier: M
 }
 
 @Composable
-internal fun LiveTvSeekFeedback(window: LiveTvSeekWindow?, watchedMs: Long, modifier: Modifier = Modifier) {
+internal fun LiveTvSeekFeedback(
+    window: LiveTvSeekWindow?,
+    watchedMs: Long,
+    modifier: Modifier = Modifier,
+    replay: Boolean = false
+) {
+    val time = if (replay && window != null) {
+        val durationMs = window.edgeMs - window.startMs
+        val positionMs = (window.positionMs - window.startMs).coerceIn(0L, durationMs)
+        "${formatTime(positionMs)} / ${formatTime(durationMs)}"
+    } else {
+        liveTvTimeLabel(window, watchedMs)
+    }
     Column(
         modifier.fillMaxWidth().background(Color.Black.copy(alpha = .80f)).padding(horizontal = 28.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         LiveTvSeekBar(window)
         Text(
-            liveTvTimeLabel(window, watchedMs),
+            time,
             modifier = Modifier.align(Alignment.End),
             color = Color.White,
             style = MaterialTheme.typography.labelLarge

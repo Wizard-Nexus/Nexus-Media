@@ -47,6 +47,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -825,11 +826,17 @@ private fun LiveTvSearchResultsDialog(
     val results = programmes.orEmpty()
     val hasChannels = channels.isNotEmpty()
     val focusProgramme = !hasChannels && results.isNotEmpty()
+    val dialogWidth = if (hasChannels) {
+        (LocalConfiguration.current.screenWidthDp.dp * .9f).coerceAtMost(1080.dp)
+    } else {
+        640.dp
+    }
 
     NuvioDialog(
         onDismiss = onDismiss,
         title = stringResource(R.string.live_tv_search_results, term),
-        width = if (hasChannels) 740.dp else 640.dp,
+        width = dialogWidth,
+        usePlatformDefaultWidth = !hasChannels,
         contentPadding = 20.dp,
         contentSpacing = 12.dp
     ) {
@@ -838,7 +845,7 @@ private fun LiveTvSearchResultsDialog(
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             if (hasChannels) {
-                Column(Modifier.weight(2f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(Modifier.weight(1.2f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(Modifier.height(31.dp), verticalAlignment = Alignment.CenterVertically) {
                         SearchResultsHeading(stringResource(R.string.live_tv_search_channels_heading))
                     }
@@ -860,7 +867,7 @@ private fun LiveTvSearchResultsDialog(
                                 ) {
                                     ChannelLogo(channel, Modifier.size(36.dp, 27.dp))
                                     Column(Modifier.weight(1f)) {
-                                        Text(channel.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        Text(channel.name)
                                         channel.group?.let {
                                             Text(
                                                 it,
@@ -877,7 +884,7 @@ private fun LiveTvSearchResultsDialog(
                     }
                 }
             }
-            Column(Modifier.weight(3f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     SearchResultsHeading(stringResource(R.string.live_tv_search_programmes_heading), Modifier.weight(1f))
                     GuideButton(stringResource(R.string.live_tv_search_day_value, dayLabel), onChooseDay)

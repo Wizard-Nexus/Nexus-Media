@@ -17,6 +17,10 @@ internal data class LiveTvSeekWindow(
         return position.takeIf { it in startMs..edgeMs }
     }
 
-    fun seekBy(deltaMs: Long): Long =
-        (positionMs.coerceIn(startMs, edgeMs) + deltaMs).coerceIn(startMs, edgeMs)
+    fun seekBy(deltaMs: Long, keepReplayTail: Boolean = false): Long {
+        val position = positionMs.coerceIn(startMs, edgeMs)
+        // A seek to the exact end of a replay can stop playback without rendering a frame.
+        val lastSeekableMs = if (keepReplayTail) maxOf(position, edgeMs - 1_000L) else edgeMs
+        return (position + deltaMs).coerceIn(startMs, lastSeekableMs)
+    }
 }

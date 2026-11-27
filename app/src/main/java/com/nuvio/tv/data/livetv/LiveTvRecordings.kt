@@ -44,7 +44,25 @@ internal data class LiveRecording(
 }
 
 internal enum class RecordingRequest {
-    SAVED, EXISTS, PERMISSION, OVERLAP, STORAGE, UNAVAILABLE
+    SAVED, EXISTS, PERMISSION, OVERLAP, QUEUE_FULL, STORAGE, UNAVAILABLE
+}
+
+internal const val MAX_SIMULTANEOUS_RECORDINGS = 2
+private const val MAX_SCHEDULED_RECORDINGS = 10
+
+internal fun recordingScheduleLimit(
+    entries: List<LiveRecording>,
+    start: Long,
+    end: Long
+): RecordingRequest? {
+    val overlaps = entries.filter {
+        (it.status == RecordingStatus.SCHEDULED || it.status.active) && it.runAt < end && start < it.endsAt
+    }
+    if (overlaps.any { entry ->
+            val instant = maxOf(start, entry.runAt)
+            overlaps.count { instant >= it.runAt && instant < it.endsAt } >= MAX_SIMULTANEOUS_RECORDINGS
+        }) return RecordingRequest.OVERLAP
+    return RecordingRequest.QUEUE_FULL.takeIf { entries.count { it.status == RecordingStatus.SCHEDULED } >= MAX_SCHEDULED_RECORDINGS }
 }
 
 @Singleton
@@ -77,10 +95,7 @@ internal class LiveTvRecordings @Inject constructor(
         val matching = before.filter { it.profileId == profileId && it.sourceKey == sourceKey && it.matches(channel, programme) }
         if (matching.any { it.status == RecordingStatus.SCHEDULED || it.status.active || it.status.playable }) return RecordingRequest.EXISTS
         if (!canSchedule()) return RecordingRequest.PERMISSION
-        if (before.any {
-                (it.status == RecordingStatus.SCHEDULED || it.status.active) &&
-                    start < it.endsAt && it.runAt < programme.endsAt
-            }) return RecordingRequest.OVERLAP
+        recordingScheduleLimit(before.filter { it.endsAt > now }, start, programme.endsAt)?.let { return it }
 
         val entry = LiveRecording(
             id = UUID.randomUUID().toString(),

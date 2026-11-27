@@ -78,6 +78,7 @@ internal fun LiveTvProgrammeDialog(
         val message = when (result) {
             RecordingRequest.PERMISSION -> R.string.live_tv_recording_permission_help
             RecordingRequest.OVERLAP -> R.string.live_tv_recording_overlap
+            RecordingRequest.QUEUE_FULL -> R.string.live_tv_recording_queue_full
             RecordingRequest.STORAGE -> R.string.live_tv_recording_save_error
             RecordingRequest.UNAVAILABLE -> R.string.live_tv_recording_unavailable
             else -> status ?: when {
