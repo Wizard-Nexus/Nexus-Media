@@ -16,23 +16,42 @@ import java.util.Base64
 import java.util.Locale
 import java.time.temporal.ChronoUnit
 
-internal val LIVE_TV_GUIDE_HISTORY_DAYS = listOf(1, 3, 5, 7)
+internal val LIVE_TV_GUIDE_DAY_OPTIONS = listOf(1, 3, 5, 7)
 
-internal fun guideHistoryStart(now: Long, days: Int, zone: ZoneId): Long =
-    Instant.ofEpochMilli(now).atZone(zone).toLocalDate().minusDays(days.toLong())
+private fun guideDayStart(now: Long, offset: Int, zone: ZoneId): Long =
+    Instant.ofEpochMilli(now).atZone(zone).toLocalDate().plusDays(offset.toLong())
         .atStartOfDay(zone).toInstant().toEpochMilli()
 
-internal fun earlierGuideDateTargets(
-    schedules: Collection<List<LiveProgramme>>,
+internal fun guideHistoryStart(now: Long, days: Int, zone: ZoneId): Long = guideDayStart(now, -days, zone)
+
+internal fun guideAheadEnd(now: Long, days: Int, zone: ZoneId): Long = guideDayStart(now, days + 1, zone)
+
+internal data class GuideDateTarget(val channelId: Long, val time: Long)
+
+internal fun guideDateTargets(
+    schedules: Sequence<Pair<Long, List<LiveProgramme>>>,
     now: Long,
-    days: Int,
-    zone: ZoneId
-): List<Long> = (1..days).mapNotNull { day ->
-    val start = guideHistoryStart(now, day, zone)
-    val end = guideHistoryStart(now, day - 1, zone)
-    schedules.mapNotNull { schedule ->
-        schedule.firstOrNull { it.endsAt > start && it.startsAt < end }?.startsAt
-    }.minOrNull()?.coerceAtLeast(start)
+    historyDays: Int,
+    aheadDays: Int,
+    zone: ZoneId,
+    preferredChannelId: Long?
+): List<GuideDateTarget> {
+    val offsets = (1..historyDays).map { -it } + (1..aheadDays)
+    val days = offsets.map { offset -> guideDayStart(now, offset, zone) until guideDayStart(now, offset + 1, zone) }
+    val targets = arrayOfNulls<GuideDateTarget>(days.size)
+    for ((id, schedule) in schedules) {
+        days.forEachIndexed { index, day ->
+            val previous = targets[index]
+            if (previous != null && previous.channelId == preferredChannelId) return@forEachIndexed
+            val programme = schedule.firstOrNull { it.endsAt > day.first && it.startsAt <= day.last }
+                ?: return@forEachIndexed
+            val time = programme.startsAt.coerceAtLeast(day.first)
+            if (previous == null || id == preferredChannelId || time < previous.time) {
+                targets[index] = GuideDateTarget(id, time)
+            }
+        }
+    }
+    return targets.filterNotNull()
 }
 
 internal fun mergeGuideHistory(
@@ -58,7 +77,8 @@ internal fun findGuideProgrammes(
     schedules: Sequence<Pair<Long, List<LiveProgramme>>>,
     cutoff: Long,
     now: Long,
-    searchDay: LongRange? = null
+    searchDay: LongRange? = null,
+    aheadEnd: Long = Long.MAX_VALUE
 ): List<LiveSportsEvent> {
     val words = guideSearchWords.split(normalizeGuideText(query)).filter(String::isNotBlank)
     if (words.isEmpty()) return emptyList()
@@ -66,7 +86,7 @@ internal fun findGuideProgrammes(
     return schedules.flatMap { (id, programmes) ->
         val channel = channels[id] ?: return@flatMap emptySequence()
         programmes.asSequence().filter { programme ->
-            if (programme.endsAt <= cutoff ||
+            if (programme.endsAt <= cutoff || programme.startsAt >= aheadEnd ||
                 searchDay != null && (programme.startsAt > searchDay.last || programme.endsAt <= searchDay.first)
             ) return@filter false
             val searchable = normalizeGuideText(programme.title + " " + programme.description.orEmpty())
@@ -96,8 +116,12 @@ internal data class LiveProgramme(
     fun isOnAir(now: Long): Boolean = now in startsAt until endsAt
 }
 
-internal fun LiveProgramme.hasStartOverArchive(channel: LiveChannel, now: Long): Boolean =
-    startsAt < now && isOnAir(now) && hasArchive != false && (hasArchive == true || channel.archiveDays > 0)
+internal fun LiveProgramme.canRequestStartOver(channel: LiveChannel, now: Long): Boolean {
+    if (startsAt >= now || !isOnAir(now)) return false
+    if (channel.archiveDays > 0 && now - startsAt > channel.archiveDays.toLong() * 86_400_000L) return false
+    // Some panels mark current entries as unarchived even when the channel offers timeshift.
+    return channel.archiveEnabled || channel.archiveDays > 0 || hasArchive == true
+}
 
 internal fun LiveProgramme.canReplay(channel: LiveChannel, now: Long): Boolean {
     if (endsAt > now || hasArchive == false) return false

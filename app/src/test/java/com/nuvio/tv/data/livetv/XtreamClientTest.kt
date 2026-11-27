@@ -23,18 +23,20 @@ class XtreamClientTest {
             server.enqueue(MockResponse().setBody(
                 """[{"stream_id":"101","name":"Test Sports","category_id":12,"stream_icon":"https://images.example.test/sport.png","tv_archive":1,"tv_archive_duration":"3"},
                    {"stream_id":102,"name":"Test News","category_id":"18","tv_archive":0,"tv_archive_duration":7},
+                   {"stream_id":103,"name":"Short archive","category_id":"18","tv_archive":"true"},
                    {"stream_id":true,"name":"Invalid entry"}]"""
             ))
 
             val source = checkNotNull(XtreamSource.from(server.url("/iptv/").toString(), "aa+bb", "p/a?s"))
             val catalog = XtreamClient().load(source)
 
-            assertEquals(listOf("Test Sports", "Test News"), catalog.channels.map { it.name })
+            assertEquals(listOf("Test Sports", "Test News", "Short archive"), catalog.channels.map { it.name })
             assertTrue(catalog.channels.first().isSports)
             assertEquals("https://images.example.test/sport.png", catalog.channels.first().logoUrl)
             assertNull(catalog.channels.last().logoUrl)
             assertFalse(catalog.channels.last().isSports)
-            assertEquals(listOf(3, 0), catalog.channels.map { it.archiveDays })
+            assertEquals(listOf(3, 0, 0), catalog.channels.map { it.archiveDays })
+            assertEquals(listOf(true, false, true), catalog.channels.map { it.archiveEnabled })
             assertEquals("m3u8", catalog.format)
             assertEquals("/iptv/live/aa+bb/p%2Fa%3Fs/101.m3u8", source.streamUrl(101, catalog.format).encodedPath)
 

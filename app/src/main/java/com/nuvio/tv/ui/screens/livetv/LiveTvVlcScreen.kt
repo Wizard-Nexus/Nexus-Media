@@ -165,7 +165,7 @@ internal fun LiveTvVlcScreen(
         browseOnOpen = null
     }
 
-    LaunchedEffect(channelId, state.sourceKey) { viewModel.requestGuide(listOf(channelId)) }
+    if (state.profileId == profileId) KeepLiveTvGuideUpdated(viewModel, channelId, state.sourceKey)
     LaunchedEffect(layout, foreground, streamUrl, retry, state.loading && current == null, state.stereoPcm, startOverArchive) {
         val archive = startOverArchive
         if (archive != null) {

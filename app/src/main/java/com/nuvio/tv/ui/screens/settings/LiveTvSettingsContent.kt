@@ -38,7 +38,7 @@ import androidx.tv.material3.Button
 import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.core.qr.QrCodeGenerator
-import com.nuvio.tv.data.livetv.LIVE_TV_GUIDE_HISTORY_DAYS
+import com.nuvio.tv.data.livetv.LIVE_TV_GUIDE_DAY_OPTIONS
 import com.nuvio.tv.data.livetv.LiveTvPlayer
 import com.nuvio.tv.data.livetv.groupNames
 import com.nuvio.tv.domain.model.AppTheme
@@ -48,7 +48,7 @@ import com.nuvio.tv.ui.screens.livetv.LiveTvViewModel
 import com.nuvio.tv.ui.screens.livetv.XtreamPhoneSetupState
 import com.nuvio.tv.ui.theme.NuvioTheme
 
-private enum class LiveTvPicker { PLAYER, AUDIO, HISTORY, COLOUR }
+private enum class LiveTvPicker { PLAYER, AUDIO, HISTORY, AHEAD, COLOUR }
 
 @Composable
 internal fun LiveTvSettingsContent(viewModel: LiveTvViewModel, initialFocusRequester: FocusRequester?) {
@@ -72,6 +72,8 @@ internal fun LiveTvSettingsContent(viewModel: LiveTvViewModel, initialFocusReque
         )
         val historyTitle = stringResource(R.string.live_tv_guide_history)
         val historyHelp = stringResource(R.string.live_tv_guide_history_help)
+        val aheadTitle = stringResource(R.string.live_tv_guide_ahead)
+        val aheadHelp = stringResource(R.string.live_tv_guide_ahead_help)
         val players = listOf(
             SettingsPickerOption(LiveTvPlayer.DEFAULT, stringResource(R.string.live_tv_player_default)),
             SettingsPickerOption(LiveTvPlayer.LIBVLC, "LibVLC")
@@ -102,6 +104,12 @@ internal fun LiveTvSettingsContent(viewModel: LiveTvViewModel, initialFocusReque
                     subtitle = historyHelp,
                     value = pluralStringResource(R.plurals.live_tv_history_days, state.guideHistoryDays, state.guideHistoryDays),
                     onClick = { picker = LiveTvPicker.HISTORY }
+                )
+                SettingsActionRow(
+                    title = aheadTitle,
+                    subtitle = aheadHelp,
+                    value = pluralStringResource(R.plurals.live_tv_history_days, state.guideAheadDays, state.guideAheadDays),
+                    onClick = { picker = LiveTvPicker.AHEAD }
                 )
                 SettingsActionRow(
                     title = stringResource(R.string.live_tv_guide_colour),
@@ -179,19 +187,22 @@ internal fun LiveTvSettingsContent(viewModel: LiveTvViewModel, initialFocusReque
                 },
                 onDismiss = dismissPicker
             )
-            LiveTvPicker.HISTORY -> SettingsSingleChoiceDialog(
-                title = historyTitle,
-                subtitle = historyHelp,
-                options = LIVE_TV_GUIDE_HISTORY_DAYS.map { days ->
-                    SettingsPickerOption(days, pluralStringResource(R.plurals.live_tv_history_days, days, days))
-                },
-                selectedValue = state.guideHistoryDays,
-                onOptionSelected = {
-                    viewModel.setGuideHistoryDays(it)
-                    dismissPicker()
-                },
-                onDismiss = dismissPicker
-            )
+            LiveTvPicker.HISTORY, LiveTvPicker.AHEAD -> {
+                val ahead = picker == LiveTvPicker.AHEAD
+                SettingsSingleChoiceDialog(
+                    title = if (ahead) aheadTitle else historyTitle,
+                    subtitle = if (ahead) aheadHelp else historyHelp,
+                    options = LIVE_TV_GUIDE_DAY_OPTIONS.map { days ->
+                        SettingsPickerOption(days, pluralStringResource(R.plurals.live_tv_history_days, days, days))
+                    },
+                    selectedValue = if (ahead) state.guideAheadDays else state.guideHistoryDays,
+                    onOptionSelected = {
+                        if (ahead) viewModel.setGuideAheadDays(it) else viewModel.setGuideHistoryDays(it)
+                        dismissPicker()
+                    },
+                    onDismiss = dismissPicker
+                )
+            }
             LiveTvPicker.COLOUR -> GuideColourPicker(
                 selected = state.guideColour,
                 onSelect = {

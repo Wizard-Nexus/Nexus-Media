@@ -18,7 +18,9 @@ import com.nuvio.tv.data.livetv.LiveTvRecordings
 import com.nuvio.tv.data.livetv.RecordingRequest
 import com.nuvio.tv.data.livetv.canReplay
 import com.nuvio.tv.data.livetv.guideHistoryStart
-import com.nuvio.tv.data.livetv.hasStartOverArchive
+import com.nuvio.tv.data.livetv.canRequestStartOver
+import com.nuvio.tv.data.livetv.GuideDateTarget
+import com.nuvio.tv.data.livetv.guideDateTargets
 import com.nuvio.tv.data.livetv.LiveTvCategories
 import com.nuvio.tv.data.livetv.LiveTvHistory
 import com.nuvio.tv.data.livetv.LiveTvPlayer
@@ -59,6 +61,7 @@ internal data class LiveTvState(
     val profileId: Int,
     val player: LiveTvPlayer = LiveTvPlayer.DEFAULT,
     val guideHistoryDays: Int = 1,
+    val guideAheadDays: Int = 7,
     val guideColour: AppTheme? = null,
     val stereoPcm: Boolean = false,
     val catalog: XtreamCatalog? = null,
@@ -152,6 +155,7 @@ internal class LiveTvViewModel @Inject constructor(
                     profileId = id,
                     player = storage.readPlayer(id),
                     guideHistoryDays = storage.readGuideHistoryDays(id),
+                    guideAheadDays = storage.readGuideAheadDays(id),
                     guideColour = storage.readGuideColour(id),
                     stereoPcm = storage.readStereoPcm(id),
                     catalog = source?.let { storage.readCatalog(id, it) },
@@ -217,7 +221,7 @@ internal class LiveTvViewModel @Inject constructor(
         val catalog = _state.value.catalog ?: return null
         val channel = catalog.channels.firstOrNull { it.id == channelId } ?: return null
         val now = System.currentTimeMillis()
-        if (!programme.hasStartOverArchive(channel, now)) return null
+        if (!programme.canRequestStartOver(channel, now)) return null
         val airedPortion = programme.copy(endsAt = now)
         return LiveTvArchivePlayback(
             source.replayUrl(channel, airedPortion, catalog).toString(),
@@ -272,6 +276,12 @@ internal class LiveTvViewModel @Inject constructor(
         active.guideCheckedAt.clear()
     }
 
+    fun setGuideAheadDays(days: Int) {
+        val active = currentProfile() ?: return
+        storage.writeGuideAheadDays(active.id, days)
+        _state.update { it.copy(guideAheadDays = days) }
+    }
+
     fun setGuideColour(colour: AppTheme?) {
         val active = currentProfile() ?: return
         storage.writeGuideColour(active.id, colour)
@@ -316,6 +326,7 @@ internal class LiveTvViewModel @Inject constructor(
                     profileId = active.id,
                     player = current.player,
                     guideHistoryDays = current.guideHistoryDays,
+                    guideAheadDays = current.guideAheadDays,
                     guideColour = current.guideColour,
                     stereoPcm = current.stereoPcm,
                     loading = false
@@ -369,6 +380,22 @@ internal class LiveTvViewModel @Inject constructor(
         if (changed == _state.value.history) return
         storage.writeHistory(active.id, source, changed)
         _state.update { it.copy(history = changed) }
+    }
+
+    suspend fun loadGuideDates(
+        channelIds: Set<Long>,
+        preferredChannelId: Long?,
+        now: Long,
+        zone: ZoneId
+    ): List<GuideDateTarget> {
+        val active = currentProfile() ?: return emptyList()
+        val source = active.source ?: return emptyList()
+        val snapshot = _state.value
+        val targets = withContext(Dispatchers.IO) {
+            val schedules = storage.cachedGuideSchedules(active.id, source, channelIds, snapshot.guide)
+            guideDateTargets(schedules, now, snapshot.guideHistoryDays, snapshot.guideAheadDays, zone, preferredChannelId)
+        }
+        return targets.takeIf { currentProfile() === active && active.source === source }.orEmpty()
     }
 
     suspend fun searchProgrammes(query: String, day: LocalDate?): List<LiveSportsEvent> {

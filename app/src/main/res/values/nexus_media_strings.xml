@@ -99,6 +99,7 @@
     <string name="live_tv_seek_unavailable">This channel has no rewind window.</string>
     <string name="live_tv_go_live">Go live</string>
     <string name="live_tv_start_over">Start from beginning</string>
+    <string name="live_tv_start_over_failed">This programme could not play from the beginning. Go live to return to the channel.</string>
     <string name="live_tv_fps">%d FPS</string>
     <string name="live_tv_stream_fps">%d stream FPS</string>
     <string name="live_tv_fps_waiting">— FPS</string>
@@ -145,6 +146,8 @@
     <string name="live_tv_recording_entry_subtitle">%1$s · %2$s · %3$s</string>
     <string name="live_tv_guide_history">Guide history</string>
     <string name="live_tv_guide_history_help">Keep previously loaded listings for this many days on this TV.</string>
+    <string name="live_tv_guide_ahead">Guide ahead</string>
+    <string name="live_tv_guide_ahead_help">Show upcoming listings this many days ahead when your provider supplies them.</string>
     <plurals name="live_tv_history_days">
         <item quantity="one">%d day</item>
         <item quantity="other">%d days</item>
@@ -152,7 +155,8 @@
     <string name="live_tv_guide_date">Date</string>
     <string name="live_tv_guide_choose_date">Jump to date</string>
     <string name="live_tv_guide_today">Today</string>
-    <string name="live_tv_guide_no_history">No earlier listings are available for these channels.</string>
+    <string name="live_tv_guide_checking_dates">Checking saved guide dates…</string>
+    <string name="live_tv_guide_no_dates">Guide dates will appear as Nexus saves listings for these channels.</string>
     <string name="live_tv_guide_colour">Guide colour</string>
     <string name="live_tv_guide_colour_short">Colour</string>
     <string name="live_tv_guide_profile_colour">Match profile</string>

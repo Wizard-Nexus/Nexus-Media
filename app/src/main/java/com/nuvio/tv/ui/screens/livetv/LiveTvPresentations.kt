@@ -17,7 +17,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.MaterialTheme
@@ -43,6 +46,21 @@ internal fun liveGuideClock(): Long = produceState(System.currentTimeMillis()) {
         value = System.currentTimeMillis()
     }
 }.value
+
+@Composable
+internal fun KeepLiveTvGuideUpdated(viewModel: LiveTvViewModel, channelId: Long, sourceKey: String?) {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle, viewModel, channelId, sourceKey) {
+        if (sourceKey == null) return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            val channels = listOf(channelId)
+            while (true) {
+                viewModel.requestGuide(channels, full = true)
+                delay(60_000L)
+            }
+        }
+    }
+}
 
 internal fun formatProgrammeTime(time: Long): String =
     Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))

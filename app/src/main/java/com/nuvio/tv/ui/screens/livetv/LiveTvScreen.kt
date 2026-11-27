@@ -62,7 +62,8 @@ import com.nuvio.tv.R
 import com.nuvio.tv.data.livetv.LiveChannel
 import com.nuvio.tv.data.livetv.XtreamConnections
 import com.nuvio.tv.data.livetv.canReplay
-import com.nuvio.tv.data.livetv.earlierGuideDateTargets
+import com.nuvio.tv.data.livetv.GuideDateTarget
+import com.nuvio.tv.data.livetv.guideAheadEnd
 import com.nuvio.tv.data.livetv.groupNames
 import com.nuvio.tv.data.livetv.guideHistoryStart
 import com.nuvio.tv.data.livetv.isSportsGuideCandidate
@@ -234,6 +235,7 @@ private fun LiveTvGuideContent(
     val now = liveGuideClock()
     val zone = ZoneId.systemDefault()
     val historyStart = guideHistoryStart(now, state.guideHistoryDays, zone)
+    val aheadEnd = guideAheadEnd(now, state.guideAheadDays, zone)
     var connections by remember(state.profileId, state.sourceKey) { mutableStateOf<XtreamConnections?>(null) }
     LaunchedEffect(playingId, state.profileId, state.sourceKey) {
         val sourceKey = state.sourceKey ?: return@LaunchedEffect
@@ -261,15 +263,17 @@ private fun LiveTvGuideContent(
             delay(5 * 60_000L)
         }
     }
-    val historyGuide = remember(state.guide, historyStart) {
-        state.guide.mapValues { (_, schedule) -> schedule.filter { it.endsAt > historyStart } }
+    val windowGuide = remember(state.guide, historyStart, aheadEnd) {
+        state.guide.mapValues { (_, schedule) ->
+            schedule.filter { it.endsAt > historyStart && it.startsAt < aheadEnd }
+        }
     }
     val guide = if (sportsOnly) {
         remember(sportsCandidates, sportsSchedules, state.guide, now) {
             liveMainSportsListings(sportsCandidates, state.guide + sportsSchedules, now)
         }
     } else {
-        historyGuide
+        windowGuide
     }
 
     val sportsIds = if (sportsOnly) guide.keys else emptySet()
@@ -292,10 +296,11 @@ private fun LiveTvGuideContent(
     val rowFocus = remember { FocusRequester() }
     var railFocusRequest by remember { mutableIntStateOf(0) }
     var highlightedId by remember { mutableStateOf(restoreId) }
+    var dateJumpChannelId by remember { mutableStateOf<Long?>(null) }
     var browsingTime by rememberSaveable { mutableLongStateOf(initialBrowse?.getLong("time") ?: 0L) }
     var windowAnchor by rememberSaveable { mutableLongStateOf(initialBrowse?.getLong("anchor") ?: 0L) }
     val targetRow = highlightedId?.let { highlighted -> items.firstOrNull { it.id == highlighted } } ?: items.firstOrNull()
-    val programmeTime = browsingTime.takeIf { !sportsOnly && it != 0L }?.coerceAtLeast(historyStart) ?: now
+    val programmeTime = browsingTime.takeIf { !sportsOnly && it != 0L }?.coerceIn(historyStart, aheadEnd - 1) ?: now
     val highlighted = targetRow?.takeIf { highlightedId == it.id }
     val currentProgrammes = guide[highlighted?.id].orEmpty()
     val browsableSchedules = remember(currentProgrammes, guide, visibleIds) {
@@ -397,6 +402,18 @@ private fun LiveTvGuideContent(
         withFrameNanos { }
         runCatching { categoryFocus.requestFocus() }
     }
+    LaunchedEffect(dateJumpChannelId, choosingDate, items) {
+        val id = dateJumpChannelId?.takeUnless { choosingDate } ?: return@LaunchedEffect
+        val index = items.indexOfFirst { it.id == id }
+        if (index >= 0) {
+            highlightedId = id
+            if (id !in visibleIds) rowState.scrollToItem(index)
+            snapshotFlow { id in visibleIds }.first { it }
+            withFrameNanos { }
+            runCatching { rowFocus.requestFocus() }
+        }
+        dateJumpChannelId = null
+    }
     LaunchedEffect(rowState, state.sourceKey, sportsOnly, now / 60_000L) {
         if (sportsOnly) return@LaunchedEffect
         snapshotFlow { rowState.layoutInfo.visibleItemsInfo.mapNotNull { it.key as? Long } }
@@ -422,21 +439,26 @@ private fun LiveTvGuideContent(
         val windowDuration = (timelineWidth.value.toDouble() / halfHourWidth.value * GUIDE_STEP_MS)
             .roundToLong().coerceAtLeast(1L)
         val start = windowAnchor.takeIf { !sportsOnly && it != 0L } ?: guideTimeFloor(now)
-        val window = GuideWindow(start.coerceAtLeast(historyStart), windowDuration, timelineWidth)
-        val bounds = remember(browsableSchedules, now, historyStart) {
+        val lastAnchor = (aheadEnd - windowDuration).coerceAtLeast(historyStart)
+        val window = GuideWindow(start.coerceIn(historyStart, lastAnchor), windowDuration, timelineWidth)
+        val bounds = remember(browsableSchedules, now, historyStart, aheadEnd) {
             val earliest = browsableSchedules.mapNotNull { it.firstOrNull()?.startsAt }.minOrNull() ?: now
             val latest = browsableSchedules.mapNotNull { it.lastOrNull()?.endsAt }.maxOrNull() ?: now
-            guideTimeFloor(minOf(earliest, now)).coerceAtLeast(historyStart) to maxOf(latest, now)
+            guideTimeFloor(minOf(earliest, now)).coerceAtLeast(historyStart) to maxOf(latest, now).coerceAtMost(aheadEnd)
         }
         val pageDuration = (window.duration / GUIDE_STEP_MS).coerceAtLeast(1L) * GUIDE_STEP_MS
 
         fun reveal(time: Long) {
-            browsingTime = time.coerceAtLeast(historyStart)
+            browsingTime = time.coerceIn(historyStart, aheadEnd - 1)
             if (browsingTime !in window.start until window.end) windowAnchor = guideTimeFloor(browsingTime)
         }
 
         fun page(forward: Boolean) {
-            val next = if (forward) window.start + pageDuration else (window.start - pageDuration).coerceAtLeast(bounds.first)
+            val next = if (forward) {
+                (window.start + pageDuration).coerceAtMost(lastAnchor)
+            } else {
+                (window.start - pageDuration).coerceAtLeast(bounds.first)
+            }
             windowAnchor = next
             browsingTime = next
         }
@@ -558,21 +580,31 @@ private fun LiveTvGuideContent(
     }
 
     if (choosingDate) {
-        val dates = remember(browsableSchedules, historyStart) {
-            earlierGuideDateTargets(browsableSchedules, now, state.guideHistoryDays, zone)
+        val channelIds = remember(items) { items.mapTo(hashSetOf()) { it.id } }
+        val loadedDates by produceState<List<GuideDateTarget>?>(
+            null, channelIds, highlightedId, historyStart, aheadEnd, state.guide
+        ) {
+            value = viewModel.loadGuideDates(channelIds, highlightedId, now, zone)
         }
+        val dates = loadedDates.orEmpty()
         val dateLabel = formatGuideDate(programmeTime)
         SettingsSingleChoiceDialog(
             title = stringResource(R.string.live_tv_guide_choose_date),
-            subtitle = if (dates.isEmpty()) stringResource(R.string.live_tv_guide_no_history) else null,
-            options = listOf(SettingsPickerOption(0L, stringResource(R.string.live_tv_guide_today))) +
-                dates.map { SettingsPickerOption(it, formatGuideDate(it)) },
-            selectedValue = dates.firstOrNull { formatGuideDate(it) == dateLabel } ?: 0L,
-            onOptionSelected = { time ->
+            subtitle = when {
+                loadedDates == null -> stringResource(R.string.live_tv_guide_checking_dates)
+                dates.isEmpty() -> stringResource(R.string.live_tv_guide_no_dates)
+                else -> null
+            },
+            options = (listOf(null) + dates).map { target ->
+                SettingsPickerOption(target, target?.let { formatGuideDate(it.time) } ?: stringResource(R.string.live_tv_guide_today))
+            },
+            selectedValue = dates.firstOrNull { formatGuideDate(it.time) == dateLabel },
+            onOptionSelected = { target ->
                 choosingDate = false
-                if (time == 0L) clearTimeSelection() else {
-                    browsingTime = time
-                    windowAnchor = guideTimeFloor(time)
+                if (target == null) clearTimeSelection() else {
+                    browsingTime = target.time
+                    windowAnchor = guideTimeFloor(target.time)
+                    dateJumpChannelId = target.channelId
                 }
             },
             onDismiss = { choosingDate = false }
@@ -608,8 +640,9 @@ private fun LiveTvGuideContent(
         var selectedDay by remember(term) { mutableStateOf<LocalDate?>(null) }
         var choosingDay by remember(term) { mutableStateOf(false) }
         val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
-        val days = remember(today, state.guideHistoryDays) {
-            (0..state.guideHistoryDays).map { today.minusDays(it.toLong()) }
+        val days = remember(today, state.guideHistoryDays, state.guideAheadDays) {
+            (0..state.guideHistoryDays).map { today.minusDays(it.toLong()) } +
+                (1..state.guideAheadDays).map { today.plusDays(it.toLong()) }
         }
         val effectiveDay = selectedDay?.takeIf { it in days }
         val allDaysLabel = stringResource(R.string.live_tv_search_all_days)
@@ -619,7 +652,7 @@ private fun LiveTvGuideContent(
             today -> todayLabel
             else -> formatGuideDate(day.atStartOfDay(zone).toInstant().toEpochMilli())
         }
-        val programmes by produceState<List<LiveSportsEvent>?>(null, term, effectiveDay, state.sourceKey) {
+        val programmes by produceState<List<LiveSportsEvent>?>(null, term, effectiveDay, state.sourceKey, historyStart, aheadEnd) {
             value = null
             value = viewModel.searchProgrammes(term, effectiveDay)
         }

@@ -90,7 +90,8 @@ internal data class LiveChannel(
     val name: String,
     val group: String?,
     val logoUrl: String? = null,
-    val archiveDays: Int = 0
+    val archiveDays: Int = 0,
+    val archiveEnabled: Boolean = false
 ) {
     val isSports: Boolean
         get() = group?.contains("sport", ignoreCase = true) == true
@@ -129,9 +130,13 @@ internal class XtreamClient(
             val name = row.field("name") ?: return@mapNotNull null
             val logo = row.field("stream_icon")?.toHttpUrlOrNull()
                 ?.takeIf { it.username.isEmpty() && it.password.isEmpty() }?.toString()
-            val archive = row.field("tv_archive")
+            val archive = row.field("tv_archive")?.lowercase(Locale.ROOT)
             val days = row.field("tv_archive_duration")?.toIntOrNull()?.coerceAtLeast(0) ?: 0
-            LiveChannel(id, name, groups[row.field("category_id")], logo, if (archive == "0" || archive == "false") 0 else days)
+            LiveChannel(
+                id, name, groups[row.field("category_id")], logo,
+                archiveDays = if (archive == "0" || archive == "false") 0 else days,
+                archiveEnabled = archive == "1" || archive == "true"
+            )
         }.distinctBy { it.id }
         if (channels.isEmpty()) throw XtreamException(XtreamProblem.NO_CHANNELS)
         val timezone = (received["server_info"] as? JsonObject)?.field("timezone")

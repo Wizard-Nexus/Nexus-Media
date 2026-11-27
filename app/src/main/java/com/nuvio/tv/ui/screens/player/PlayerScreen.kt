@@ -187,6 +187,7 @@ import kotlin.math.abs
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.tv.data.livetv.LiveChannel
 import com.nuvio.tv.data.livetv.nowAndNext
+import com.nuvio.tv.ui.screens.livetv.KeepLiveTvGuideUpdated
 import com.nuvio.tv.ui.screens.livetv.LiveTvEdgeButton
 import com.nuvio.tv.ui.screens.livetv.LiveTvFpsReadout
 import com.nuvio.tv.ui.screens.livetv.LiveTvPlaybackGuide
@@ -286,13 +287,24 @@ internal fun PlayerScreen(
     fun switchChannel(channel: LiveChannel, list: List<LiveChannel>? = null, browse: Bundle? = null): Boolean =
         liveTvControls?.onTune?.invoke(channel, list, browse, viewModel::stopAndRelease) == true
 
+    val returnToLive = if (liveControlsAvailable && liveTvControls?.startOver == true) {
+        channelIndex[liveTvControls.currentId]?.let { channel ->
+            {
+                switchChannel(channel)
+                Unit
+            }
+        }
+    } else null
+
     fun showFullscreen() {
         showLiveGuide = false
         browseOnOpen = null
     }
     if (liveTvControls != null) {
+        if (liveControlsAvailable) {
+            KeepLiveTvGuideUpdated(liveTvControls.viewModel, liveTvControls.currentId, liveState?.sourceKey)
+        }
         LaunchedEffect(viewModel, liveTvControls.profileId, liveTvControls.currentId, liveState?.sourceKey) {
-            liveTvControls.viewModel.requestGuide(listOf(liveTvControls.currentId))
             viewModel.livePlaybackStarted.filterNotNull().first()
             liveTvControls.viewModel.channelRendered(liveTvControls.profileId, liveTvControls.currentId)
         }
@@ -1593,8 +1605,8 @@ internal fun PlayerScreen(
         // Error state
         if (uiState.error != null && !liveGuideVisible) {
             ErrorOverlay(
-                message = uiState.error!!,
-                showSwitchToMpvAction = uiState.showSwitchToMpvErrorAction &&
+                message = if (returnToLive != null) stringResource(R.string.live_tv_start_over_failed) else uiState.error!!,
+                showSwitchToMpvAction = returnToLive == null && uiState.showSwitchToMpvErrorAction &&
                     uiState.internalPlayerEngine != InternalPlayerEngine.MVP_PLAYER,
                 onSwitchToMpv = { viewModel.onEvent(PlayerEvent.OnSwitchToMpvPlayer) },
                 showReportAction = uiState.playbackIssueReportsEnabled,
@@ -1602,7 +1614,8 @@ internal fun PlayerScreen(
                 reportId = uiState.playbackIssueReportId,
                 reportError = uiState.playbackIssueReportError,
                 onReport = { viewModel.onEvent(PlayerEvent.OnReportPlaybackIssue) },
-                onBack = exitPlayerFromError
+                onBack = returnToLive ?: exitPlayerFromError,
+                backLabel = if (returnToLive != null) R.string.live_tv_go_live else R.string.player_go_back
             )
         }
 
@@ -1792,9 +1805,7 @@ internal fun PlayerScreen(
                 } else null,
                 onPreviousChannel = previousChannel?.let { channel -> { switchChannel(channel) } },
                 onStartOver = if (liveProgramme != null || liveTvControls?.startOver == true) ::startLiveProgramme else null,
-                onReturnToLive = if (liveTvControls?.startOver == true) {
-                    { channelIndex[liveTvControls.currentId]?.let { switchChannel(it) } }
-                } else null,
+                onReturnToLive = returnToLive,
                 liveTvTransport = liveTvControls != null,
                 onShowPartyPanel = if (partyAvailable && viewModel.canUseParty) {
                     { viewModel.onEvent(PlayerEvent.OnShowPartyPanel) }
@@ -4345,7 +4356,8 @@ private fun ErrorOverlay(
     reportId: String?,
     reportError: String?,
     onReport: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    backLabel: Int = R.string.player_go_back
 ) {
     val exitFocusRequester = remember { FocusRequester() }
     val reportFocusRequester = remember { FocusRequester() }
@@ -4470,7 +4482,7 @@ private fun ErrorOverlay(
                     )
                 }
                 PlayerOverlayButton(
-                    text = stringResource(R.string.player_go_back),
+                    text = stringResource(backLabel),
                     onClick = onBack,
                     primary = onSwitchMpvAction == null,
                     modifier = Modifier

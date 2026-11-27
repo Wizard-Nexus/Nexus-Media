@@ -26,13 +26,32 @@ class LiveTvGuideHistoryTest {
     }
 
     @Test
-    fun jumpsUseOnlyPastDatesWithListingsWithinTheSelectedWindow() {
-        val schedules = listOf(listOf(on(8), on(7), on(3), on(0)), listOf(on(5), on(1)))
-        assertEquals(listOf(at(1, 12)), earlierGuideDateTargets(schedules, now, 1, zone))
-        assertEquals(listOf(at(1, 12), at(3, 12)), earlierGuideDateTargets(schedules, now, 3, zone))
-        assertEquals(listOf(at(1, 12), at(3, 12), at(5, 12)), earlierGuideDateTargets(schedules, now, 5, zone))
-        assertEquals(listOf(at(1, 12), at(3, 12), at(5, 12), at(7, 12)), earlierGuideDateTargets(schedules, now, 7, zone))
-        assertEquals(emptyList<Long>(), earlierGuideDateTargets(listOf(listOf(on(0))), now, 7, zone))
+    fun jumpsUseOnlyPastAndFutureDatesWithListingsInsideTheSelectedWindows() {
+        val schedules = sequenceOf(
+            1L to listOf(on(8), on(7), on(3), on(0), on(-1), on(-3), on(-8)),
+            2L to listOf(on(5), on(1), on(-5), on(-7))
+        )
+        for (days in LIVE_TV_GUIDE_DAY_OPTIONS) {
+            val offsets = (1..days step 2).toList()
+            val expected = (offsets + offsets.map { -it }).map { at(it.toLong(), 12) }
+            val actual = guideDateTargets(schedules, now, days, days, zone, null)
+            assertEquals(expected, actual.map { it.time })
+            assertEquals(at(-days.toLong() - 1), guideAheadEnd(now, days, zone))
+        }
+        assertTrue(guideDateTargets(sequenceOf(1L to listOf(on(0))), now, 7, 7, zone, 1L).isEmpty())
+    }
+
+    @Test
+    fun dateTargetsUseTheHighlightedChannelWhenItHasListingsAndAnotherChannelOtherwise() {
+        val laterOnPreferredChannel = LiveProgramme("Preferred", at(1, 16), at(1, 17))
+        val schedules = sequenceOf(
+            2L to listOf(on(2), on(1), on(-1)),
+            1L to listOf(laterOnPreferredChannel, on(0))
+        )
+        assertEquals(
+            listOf(GuideDateTarget(1L, at(1, 16)), GuideDateTarget(2L, at(2, 12)), GuideDateTarget(2L, at(-1, 12))),
+            guideDateTargets(schedules, now, 3, 1, zone, 1L)
+        )
     }
 
     @Test
@@ -70,21 +89,38 @@ class LiveTvGuideHistoryTest {
     }
 
     @Test
-    fun startsAnOngoingArchiveOnlyWhenTheProviderSupportsIt() {
+    fun currentProgrammesCanUseAChannelArchiveEvenBeforeTheirListingIsArchived() {
         val channel = LiveChannel(42, "Sports", "Arena", archiveDays = 7)
-        val programme = LiveProgramme("Live game", now - 600_000L, now + 600_000L)
-        assertTrue(programme.hasStartOverArchive(channel, now))
-        assertFalse(programme.copy(hasArchive = false).hasStartOverArchive(channel, now))
-        assertFalse(programme.hasStartOverArchive(channel.copy(archiveDays = 0), now))
-        assertTrue(programme.copy(hasArchive = true).hasStartOverArchive(channel.copy(archiveDays = 0), now))
-        assertFalse(programme.hasStartOverArchive(channel, programme.endsAt))
+        val programme = LiveProgramme("Live game", now - 600_000L, now + 600_000L, hasArchive = false)
+        assertTrue(programme.canRequestStartOver(channel, now))
+        assertTrue(programme.canRequestStartOver(channel.copy(archiveDays = 0, archiveEnabled = true), now))
+        assertFalse(programme.canRequestStartOver(channel.copy(archiveDays = 0), now))
+        assertTrue(programme.copy(hasArchive = true).canRequestStartOver(channel.copy(archiveDays = 0), now))
+        assertFalse(programme.canRequestStartOver(channel, programme.startsAt))
+        assertFalse(programme.canRequestStartOver(channel, programme.endsAt))
+        assertFalse(programme.copy(startsAt = at(8)).canRequestStartOver(channel, now))
+        assertFalse(programme.canReplay(channel, programme.endsAt))
+    }
+
+    @Test
+    fun guideSearchAppliesTheForwardLimitEvenOnAllDays() {
+        val channel = LiveChannel(31, "Sports", "Arena")
+        val events = (1L..8L).map { day -> on(-day).copy(title = "Ducks day $day") }
+        val schedules = sequenceOf(channel.id to events)
+        for (days in LIVE_TV_GUIDE_DAY_OPTIONS) {
+            val results = findGuideProgrammes(
+                "Ducks", mapOf(channel.id to channel), schedules, at(1), now,
+                aheadEnd = guideAheadEnd(now, days, zone)
+            )
+            assertEquals(events.take(days), results.map { it.programme })
+        }
     }
 
     @Test
     fun overnightListingStartsTheJumpAtTheBeginningOfTheAllowedDay() {
         val overnight = LiveProgramme("Overnight", at(2, 23), at(1, 2))
         val endsAtMidnight = LiveProgramme("Earlier", at(2, 20), at(1))
-        val schedules = listOf(listOf(endsAtMidnight, overnight))
-        assertEquals(listOf(at(1)), earlierGuideDateTargets(schedules, now, 1, zone))
+        val schedules = sequenceOf(1L to listOf(endsAtMidnight, overnight))
+        assertEquals(listOf(GuideDateTarget(1L, at(1))), guideDateTargets(schedules, now, 1, 1, zone, null))
     }
 }

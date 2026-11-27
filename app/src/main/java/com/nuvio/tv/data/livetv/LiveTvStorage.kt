@@ -59,11 +59,19 @@ internal class LiveTvStorage @Inject constructor(@ApplicationContext context: Co
     }
 
     fun readGuideHistoryDays(profileId: Int): Int =
-        history.getInt("profile.$profileId.guideHistoryDays", 1).takeIf { it in LIVE_TV_GUIDE_HISTORY_DAYS } ?: 1
+        history.getInt("profile.$profileId.guideHistoryDays", 1).takeIf { it in LIVE_TV_GUIDE_DAY_OPTIONS } ?: 1
 
     fun writeGuideHistoryDays(profileId: Int, days: Int) {
-        require(days in LIVE_TV_GUIDE_HISTORY_DAYS)
+        require(days in LIVE_TV_GUIDE_DAY_OPTIONS)
         history.edit().putInt("profile.$profileId.guideHistoryDays", days).apply()
+    }
+
+    fun readGuideAheadDays(profileId: Int): Int =
+        history.getInt("profile.$profileId.guideAheadDays", 7).takeIf { it in LIVE_TV_GUIDE_DAY_OPTIONS } ?: 7
+
+    fun writeGuideAheadDays(profileId: Int, days: Int) {
+        require(days in LIVE_TV_GUIDE_DAY_OPTIONS)
+        history.edit().putInt("profile.$profileId.guideAheadDays", days).apply()
     }
 
     fun readGuideColour(profileId: Int): AppTheme? {
@@ -152,16 +160,28 @@ internal class LiveTvStorage @Inject constructor(@ApplicationContext context: Co
         query: String,
         searchDay: LongRange?
     ): List<LiveSportsEvent> {
+        val now = System.currentTimeMillis()
+        val schedules = cachedGuideSchedules(profileId, source, channels.keys, visibleSchedules)
+        return findGuideProgrammes(
+            query, channels, schedules, guideCutoff(profileId), now, searchDay,
+            guideAheadEnd(now, readGuideAheadDays(profileId), ZoneId.systemDefault())
+        )
+    }
+
+    fun cachedGuideSchedules(
+        profileId: Int,
+        source: XtreamSource,
+        channelIds: Set<Long>,
+        visibleSchedules: Map<Long, List<LiveProgramme>>
+    ): Sequence<Pair<Long, List<LiveProgramme>>> {
         val folder = File(guideDirectory(profileId), source.cacheKey)
         val cachedIds = synchronized(cacheLock) {
             folder.listFiles { file -> file.extension == "json" }
                 ?.mapNotNull { it.nameWithoutExtension.toLongOrNull() }.orEmpty()
         }
-        val ids = (visibleSchedules.keys + cachedIds).asSequence().filter(channels::containsKey)
-        val schedules = ids.map { id ->
+        return (visibleSchedules.keys + cachedIds).asSequence().filter(channelIds::contains).map { id ->
             id to (visibleSchedules[id] ?: readGuide(profileId, source, id))
         }
-        return findGuideProgrammes(query, channels, schedules, guideCutoff(profileId), System.currentTimeMillis(), searchDay)
     }
 
     fun trimGuideHistory(profileId: Int, source: XtreamSource) = synchronized(cacheLock) {
