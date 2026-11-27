@@ -49,6 +49,26 @@ class XtreamClientTest {
     }
 
     @Test
+    fun readsReportedConnectionCountAndLimit() {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody(
+                """{"user_info":{"auth":1,"active_cons":"2","max_connections":"4"}}"""
+            ))
+            server.enqueue(MockResponse().setBody(
+                """{"user_info":{"auth":1,"active_cons":0,"max_connections":"0"}}"""
+            ))
+            server.enqueue(MockResponse().setBody(
+                """{"user_info":{"auth":1,"max_connections":"4"}}"""
+            ))
+            val source = requireNotNull(XtreamSource.from(server.url("/iptv").toString(), "viewer", "sample"))
+            val client = XtreamClient()
+            assertEquals(XtreamConnections(2, 4), client.playlistConnections(source))
+            assertEquals(XtreamConnections(0, null), client.playlistConnections(source))
+            assertEquals(null, client.playlistConnections(source))
+        }
+    }
+
+    @Test
     fun acceptsAnXtreamPlaylistLink() {
         val source = checkNotNull(XtreamSource.from(
             "https://iptv.example.test:9443/custom/get.php?username=viewer&password=x%2By&type=m3u_plus",

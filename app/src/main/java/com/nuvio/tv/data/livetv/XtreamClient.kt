@@ -104,6 +104,8 @@ internal data class XtreamCatalog(
     val categoryOrder: List<String> = emptyList()
 )
 
+internal data class XtreamConnections(val active: Int, val limit: Int?)
+
 internal enum class XtreamProblem { SIGN_IN, NO_CHANNELS, RESPONSE }
 internal class XtreamException(val problem: XtreamProblem) : IOException()
 
@@ -113,16 +115,8 @@ internal class XtreamClient(
         .build()
 ) {
     fun load(source: XtreamSource): XtreamCatalog {
-        val received = read(source, null) as? JsonObject
-        val account = received?.get("user_info") as? JsonObject
-            ?: throw XtreamException(XtreamProblem.RESPONSE)
-        val status = account.field("status")
-        if (account.field("auth") !in setOf("1", "true") ||
-            status?.lowercase() in setOf("expired", "disabled", "banned")
-        ) {
-            throw XtreamException(XtreamProblem.SIGN_IN)
-        }
-
+        val received = read(source, null) as? JsonObject ?: throw XtreamException(XtreamProblem.RESPONSE)
+        val account = received.requireAccount()
         val options = (account["allowed_output_formats"] as? JsonArray).orEmpty()
         val format = if (options.any { (it as? JsonPrimitive)?.content == "m3u8" }) "m3u8" else "ts"
         val groups = rows(source, "get_live_categories").mapNotNull { row ->
@@ -142,6 +136,24 @@ internal class XtreamClient(
         if (channels.isEmpty()) throw XtreamException(XtreamProblem.NO_CHANNELS)
         val timezone = (received["server_info"] as? JsonObject)?.field("timezone")
         return XtreamCatalog(channels, format, timezone, groups.values.distinct())
+    }
+
+    fun playlistConnections(source: XtreamSource): XtreamConnections? {
+        val response = read(source, null) as? JsonObject ?: throw XtreamException(XtreamProblem.RESPONSE)
+        val account = response.requireAccount()
+        val active = account.field("active_cons")?.toIntOrNull()?.takeIf { it >= 0 } ?: return null
+        val limit = account.field("max_connections")?.toIntOrNull()?.takeIf { it > 0 }
+        return XtreamConnections(active, limit)
+    }
+
+    private fun JsonObject.requireAccount(): JsonObject {
+        val account = get("user_info") as? JsonObject ?: throw XtreamException(XtreamProblem.RESPONSE)
+        if (account.field("auth") !in setOf("1", "true") ||
+            account.field("status")?.lowercase() in setOf("expired", "disabled", "banned")
+        ) {
+            throw XtreamException(XtreamProblem.SIGN_IN)
+        }
+        return account
     }
 
     fun guide(source: XtreamSource, streamId: Long, timezone: String?, full: Boolean = false): List<LiveProgramme> {

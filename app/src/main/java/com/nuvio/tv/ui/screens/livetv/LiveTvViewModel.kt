@@ -23,6 +23,7 @@ import com.nuvio.tv.data.livetv.LiveTvPlayer
 import com.nuvio.tv.data.livetv.LiveTvStorage
 import com.nuvio.tv.data.livetv.XtreamCatalog
 import com.nuvio.tv.data.livetv.XtreamClient
+import com.nuvio.tv.data.livetv.XtreamConnections
 import com.nuvio.tv.data.livetv.XtreamException
 import com.nuvio.tv.data.livetv.XtreamProblem
 import com.nuvio.tv.data.livetv.XtreamSource
@@ -334,6 +335,13 @@ internal class LiveTvViewModel @Inject constructor(
         if (changed == _state.value.history) return
         storage.writeHistory(active.id, source, changed)
         _state.update { it.copy(history = changed) }
+    }
+
+    suspend fun readPlaylistConnections(profileId: Int, sourceKey: String): XtreamConnections? {
+        val active = currentProfile()?.takeIf { it.id == profileId } ?: return null
+        val source = active.source?.takeIf { it.cacheKey == sourceKey } ?: return null
+        val connections = providerRequest { client.playlistConnections(source) }.getOrNull()
+        return connections.takeIf { currentProfile() === active && active.source === source }
     }
 
     fun requestGuide(ids: List<Long>, full: Boolean = false) {

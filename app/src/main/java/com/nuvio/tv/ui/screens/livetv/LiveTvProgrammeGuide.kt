@@ -8,6 +8,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -47,6 +49,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -67,6 +70,7 @@ import coil3.compose.AsyncImage
 import com.nuvio.tv.R
 import com.nuvio.tv.data.livetv.LiveChannel
 import com.nuvio.tv.data.livetv.LiveProgramme
+import com.nuvio.tv.data.livetv.XtreamConnections
 import com.nuvio.tv.data.livetv.canReplay
 import com.nuvio.tv.domain.model.AppTheme
 import com.nuvio.tv.ui.theme.NuvioTheme
@@ -133,6 +137,7 @@ internal fun stepGuideTime(programmes: List<LiveProgramme>, time: Long, forward:
     return programmes.lastOrNull { it.startsAt < start }?.startsAt
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun LiveTvGuideHeader(
     channel: LiveChannel?,
@@ -154,6 +159,7 @@ internal fun LiveTvGuideHeader(
     onWatch: (() -> Unit)?,
     previewSize: DpSize?,
     playingChannel: LiveChannel?,
+    connections: XtreamConnections?,
     onDismiss: (() -> Unit)?,
     modifier: Modifier = Modifier
 ) {
@@ -199,10 +205,10 @@ internal fun LiveTvGuideHeader(
             Modifier.weight(1f - GUIDE_PREVIEW_WEIGHT).fillMaxHeight(),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Row(
+            FlowRow(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.End),
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 if (!categoriesVisible) GuideButton(stringResource(R.string.live_tv_guide_categories), onCategories)
                 if (!sportsOnly) {
@@ -219,7 +225,29 @@ internal fun LiveTvGuideHeader(
                     description = stringResource(R.string.live_tv_guide_colour)
                 )
                 GuideButton(stringResource(R.string.live_tv_search), onSearch)
-                if (onDismiss != null) GuideButton(stringResource(R.string.live_tv_preview_fullscreen), onDismiss)
+                if (onDismiss != null) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val count = when {
+                            connections == null -> stringResource(R.string.live_tv_connections_unavailable)
+                            connections.limit != null -> stringResource(
+                                R.string.live_tv_connections_with_limit, connections.active, connections.limit
+                            )
+                            else -> pluralStringResource(
+                                R.plurals.live_tv_connections, connections.active, connections.active
+                            )
+                        }
+                        Text(
+                            count,
+                            color = GuideMuted,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1
+                        )
+                        GuideButton(stringResource(R.string.live_tv_preview_fullscreen), onDismiss)
+                    }
+                }
             }
             Spacer(Modifier.height(4.dp))
             val dateLabel = remember(date) { formatGuideDate(date) }

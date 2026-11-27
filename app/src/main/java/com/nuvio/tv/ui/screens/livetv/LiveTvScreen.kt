@@ -55,6 +55,7 @@ import androidx.tv.material3.Text
 import com.nuvio.tv.LocalContentFocusRequester
 import com.nuvio.tv.R
 import com.nuvio.tv.data.livetv.LiveChannel
+import com.nuvio.tv.data.livetv.XtreamConnections
 import com.nuvio.tv.data.livetv.earlierGuideDateTargets
 import com.nuvio.tv.data.livetv.groupNames
 import com.nuvio.tv.data.livetv.guideHistoryStart
@@ -223,6 +224,16 @@ private fun LiveTvGuideContent(
     val now = liveGuideClock()
     val zone = ZoneId.systemDefault()
     val historyStart = guideHistoryStart(now, state.guideHistoryDays, zone)
+    var connections by remember(state.profileId, state.sourceKey) { mutableStateOf<XtreamConnections?>(null) }
+    LaunchedEffect(playingId, state.profileId, state.sourceKey) {
+        val sourceKey = state.sourceKey ?: return@LaunchedEffect
+        if (playingId == null) return@LaunchedEffect
+        delay(1_500)
+        while (true) {
+            connections = viewModel.readPlaylistConnections(state.profileId, sourceKey)
+            delay(15_000)
+        }
+    }
     val sportsOnly = section == LiveTvSection.SPORTS && group == null
     val sportsCandidates = remember(channels) { channels.filter(LiveChannel::isSportsGuideCandidate) }
     var sportsSchedules by remember(state.sourceKey) { mutableStateOf(emptyMap<Long, List<LiveProgramme>>()) }
@@ -439,6 +450,7 @@ private fun LiveTvGuideContent(
                 onWatch = highlighted?.let { channel -> { play(channel) } },
                 previewSize = previewSize,
                 playingChannel = channelIndex[playingId],
+                connections = connections,
                 onDismiss = onDismiss,
                 modifier = Modifier.height(detailsHeight)
             )
