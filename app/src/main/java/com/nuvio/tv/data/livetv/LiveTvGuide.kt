@@ -35,19 +35,48 @@ internal fun List<LiveProgramme>.nowAndNext(now: Long): Pair<LiveProgramme?, Liv
 
 internal data class LiveSportsEvent(val channel: LiveChannel, val programme: LiveProgramme)
 
-internal fun liveSportsEvents(
+internal fun LiveChannel.isSportsGuideCandidate(): Boolean =
+    isSports || MAIN_SPORTS.containsMatchIn("$name ${group.orEmpty()}") || SPORTS_NETWORK.containsMatchIn(name)
+
+internal fun liveMainSportsListings(
     channels: List<LiveChannel>,
     schedules: Map<Long, List<LiveProgramme>>,
     now: Long
-): List<LiveSportsEvent> = channels.asSequence()
-    .filter { it.isSports }
-    .flatMap { channel ->
-        schedules[channel.id].orEmpty().asSequence()
-            .filter { it.endsAt > now }
-            .map { LiveSportsEvent(channel, it) }
+): Map<Long, List<LiveProgramme>> = buildMap {
+    for (channel in channels) {
+        val programme = schedules[channel.id].orEmpty()
+            .filter { it.isOnAir(now) }
+            .maxByOrNull { it.startsAt } ?: continue
+        val description = programme.description.orEmpty()
+        val listing = "${programme.title} $description"
+        if (!MAIN_SPORTS.containsMatchIn("$listing ${channel.name} ${channel.group.orEmpty()}")) continue
+        if (SPORTS_SHOW.containsMatchIn(programme.title) || REPLAY_DESCRIPTION.containsMatchIn(description)) continue
+        if (COMPETITION.containsMatchIn(listing)) put(channel.id, listOf(programme))
     }
-    .sortedWith(compareBy({ it.programme.startsAt > now }, { it.programme.startsAt }))
-    .toList()
+}
+
+private val MAIN_SPORTS = Regex(
+    """\b(?:basketball|nba|wnba|nbl|euroleague|football|soccer|epl|premier league|champions league|fifa|"""+
+        """nfl|afl|wafl|aflw|rugby|nrl|nrlw|cricket|bbl|wbbl|ipl|tennis|atp|wta|"""+
+        """baseball|mlb|hockey|nhl|golf|pga|lpga|formula[ -]?1|f1|nascar|indycar|motogp|"""+
+        """supercars|motorsports?|boxing|ufc|mma)\b""",
+    RegexOption.IGNORE_CASE
+)
+private val SPORTS_NETWORK = Regex("""\b(?:espn\d*|tnt sports|skysports|supersport)\b""", RegexOption.IGNORE_CASE)
+private val SPORTS_SHOW = Regex(
+    """\b(?:replays?|reruns?|highlights?|recap|classics?|documentary|preview|pre[ -]?game|post[ -]?game|"""+
+        """countdown|review|roundup|analysis|news|sportscent(?:er|re)|talk|daily|magazine|"""+
+        """first take|inside the nba|nba today|best of)\b""",
+    RegexOption.IGNORE_CASE
+)
+private val REPLAY_DESCRIPTION = Regex(
+    """\b(?:replay of|encore of|a repeat of|highlights from|previously recorded|pre[ -]?recorded)\b""",
+    RegexOption.IGNORE_CASE
+)
+private val COMPETITION = Regex(
+    """\b(?:live|vs\.?|versus|match(?:es)?|game \d+|round \d+|day \d+|grand prix|race|qualifying|finals?)\b|\s(?:v\.?|at|@)\s""",
+    RegexOption.IGNORE_CASE
+)
 
 internal fun parseXtreamGuide(response: JsonObject, providerZone: ZoneId?): List<LiveProgramme> {
     val rows = response["epg_listings"] as? JsonArray ?: return emptyList()

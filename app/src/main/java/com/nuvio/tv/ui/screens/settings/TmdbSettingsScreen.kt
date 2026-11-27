@@ -9,28 +9,38 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.tv.material3.Button
 import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.data.local.AVAILABLE_TMDB_LANGUAGES
 import com.nuvio.tv.data.local.displayName
+import com.nuvio.tv.ui.components.NuvioDialog
+import com.nuvio.tv.ui.screens.account.InputField
+import kotlinx.coroutines.launch
 
 @Composable
 fun TmdbSettingsScreen(
@@ -54,6 +64,9 @@ fun TmdbSettingsContent(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showLanguageDialog by remember { mutableStateOf(false) }
+    var showApiKeyDialog by remember { mutableStateOf(false) }
+    val hasLocalKey by viewModel.hasLocalApiKey.collectAsStateWithLifecycle()
+    val hasApiKey = hasLocalKey || viewModel.hasBuiltInApiKey
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -81,8 +94,11 @@ fun TmdbSettingsContent(
                     SettingsToggleRow(
                         title = stringResource(R.string.tmdb_enable_title),
                         subtitle = stringResource(R.string.tmdb_enable_subtitle),
-                        checked = uiState.enabled,
-                        onToggle = { viewModel.onEvent(TmdbSettingsEvent.ToggleEnabled(!uiState.enabled)) },
+                        checked = uiState.enabled && hasApiKey,
+                        onToggle = {
+                            if (hasApiKey) viewModel.onEvent(TmdbSettingsEvent.ToggleEnabled(!uiState.enabled))
+                            else showApiKeyDialog = true
+                        },
                         modifier = Modifier
                             .padding(top = NuvioTheme.spacing.xxs)
                             .then(
@@ -91,6 +107,15 @@ fun TmdbSettingsContent(
                                 } else {
                                     Modifier
                                 })
+                    )
+                }
+
+                item(key = "tmdb_api_key") {
+                    SettingsActionRow(
+                        title = stringResource(R.string.nexus_tmdb_key_title),
+                        subtitle = stringResource(R.string.nexus_tmdb_key_help),
+                        value = stringResource(if (hasApiKey) R.string.nexus_tmdb_key_connected else R.string.nexus_tmdb_key_missing),
+                        onClick = { showApiKeyDialog = true }
                     )
                 }
 
@@ -266,6 +291,15 @@ fun TmdbSettingsContent(
         }
     }
 
+    if (showApiKeyDialog) {
+        TmdbApiKeyDialog(
+            hasLocalKey = hasLocalKey,
+            onSave = viewModel::saveApiKey,
+            onRemove = viewModel::removeApiKey,
+            onDismiss = { showApiKeyDialog = false }
+        )
+    }
+
     if (showLanguageDialog) {
         LanguageSelectionDialog(
             title = stringResource(R.string.tmdb_language_dialog_title),
@@ -277,5 +311,64 @@ fun TmdbSettingsContent(
             },
             onDismiss = { showLanguageDialog = false }
         )
+    }
+}
+
+@Composable
+private fun TmdbApiKeyDialog(
+    hasLocalKey: Boolean,
+    onSave: suspend (String) -> Int?,
+    onRemove: suspend () -> Int?,
+    onDismiss: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val inputFocus = remember { FocusRequester() }
+    val saveFocus = remember { FocusRequester() }
+    var key by remember { mutableStateOf("") }
+    var working by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<Int?>(null) }
+
+    fun submit(operation: suspend () -> Int?) {
+        if (working) return
+        working = true
+        message = null
+        scope.launch {
+            try {
+                message = operation()
+                if (message == null) onDismiss()
+            } finally {
+                working = false
+            }
+        }
+    }
+
+    NuvioDialog(
+        onDismiss = { if (!working) onDismiss() },
+        title = stringResource(R.string.nexus_tmdb_key_title),
+        subtitle = stringResource(R.string.nexus_tmdb_key_help)
+    ) {
+        InputField(
+            value = key,
+            onValueChange = { key = it },
+            placeholder = stringResource(R.string.nexus_tmdb_key_placeholder),
+            isPassword = true,
+            imeAction = ImeAction.Done,
+            onImeAction = { if (key.isNotBlank()) saveFocus.requestFocus() },
+            modifier = Modifier.fillMaxWidth().focusRequester(inputFocus)
+        )
+        val status = message ?: R.string.nexus_tmdb_key_verifying.takeIf { working }
+        status?.let { Text(stringResource(it), style = MaterialTheme.typography.bodySmall) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onDismiss, enabled = !working) { Text(stringResource(R.string.action_cancel)) }
+            Button(onClick = { submit { onSave(key) } }, enabled = !working && key.isNotBlank(), modifier = Modifier.focusRequester(saveFocus)) {
+                Text(stringResource(R.string.nexus_tmdb_key_save))
+            }
+            if (hasLocalKey) {
+                Button(onClick = { submit(onRemove) }, enabled = !working) {
+                    Text(stringResource(R.string.nexus_tmdb_key_remove))
+                }
+            }
+        }
+        LaunchedEffect(Unit) { inputFocus.requestFocus() }
     }
 }

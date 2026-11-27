@@ -2,18 +2,25 @@ package com.nuvio.tv.ui.screens.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nuvio.tv.BuildConfig
+import com.nuvio.tv.R
+import com.nuvio.tv.core.tmdb.TmdbCredentialStore
+import com.nuvio.tv.data.remote.api.TmdbApi
 import com.nuvio.tv.data.local.TmdbSettingsDataStore
 import com.nuvio.tv.data.local.ContinueWatchingEnrichmentCache
 import com.nuvio.tv.data.trailer.TrailerService
 import com.nuvio.tv.domain.model.TmdbSettings
 import com.nuvio.tv.domain.repository.MetaRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.IOException
 import javax.inject.Inject
 
 @HiltViewModel
@@ -21,18 +28,59 @@ class TmdbSettingsViewModel @Inject constructor(
     private val dataStore: TmdbSettingsDataStore,
     private val trailerService: TrailerService,
     private val metaRepository: MetaRepository,
-    private val cwEnrichmentCache: ContinueWatchingEnrichmentCache
+    private val cwEnrichmentCache: ContinueWatchingEnrichmentCache,
+    private val tmdb: TmdbApi,
+    private val credentials: TmdbCredentialStore
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TmdbSettingsUiState())
     val uiState: StateFlow<TmdbSettingsUiState> = _uiState.asStateFlow()
+    private val _hasLocalApiKey = MutableStateFlow(false)
+    val hasLocalApiKey = _hasLocalApiKey.asStateFlow()
+    val hasBuiltInApiKey = BuildConfig.TMDB_API_KEY.isNotBlank()
 
     init {
+        viewModelScope.launch {
+            _hasLocalApiKey.value = withContext(Dispatchers.IO) { credentials.localKey() != null }
+        }
         viewModelScope.launch {
             dataStore.settings.collectLatest { settings ->
                 _uiState.update { it.fromSettings(settings) }
             }
         }
+    }
+
+    suspend fun saveApiKey(value: String): Int? {
+        val key = value.trim()
+        if (key.isEmpty() || key.any(Char::isWhitespace)) return R.string.nexus_tmdb_key_invalid
+        val response = try {
+            tmdb.verifyApiKey(key)
+        } catch (_: IOException) {
+            return R.string.nexus_tmdb_key_connection_error
+        }
+        response.body()?.close()
+        response.errorBody()?.close()
+        if (!response.isSuccessful) {
+            return if (response.code() == 401 || response.code() == 403) R.string.nexus_tmdb_key_invalid
+            else R.string.nexus_tmdb_key_connection_error
+        }
+        return updateKey(key)
+    }
+
+    suspend fun removeApiKey(): Int? = updateKey(null)
+
+    private suspend fun updateKey(key: String?): Int? {
+        val saved = withContext(Dispatchers.IO) { runCatching { credentials.setLocalKey(key) }.isSuccess }
+        if (!saved) return R.string.nexus_tmdb_key_save_error
+        _hasLocalApiKey.value = key != null
+        try {
+            dataStore.setEnabled(key != null || hasBuiltInApiKey)
+        } catch (_: IOException) {
+            return R.string.nexus_tmdb_key_settings_error
+        }
+        metaRepository.clearCache()
+        trailerService.clearCache()
+        return null
     }
 
     fun onEvent(event: TmdbSettingsEvent) {

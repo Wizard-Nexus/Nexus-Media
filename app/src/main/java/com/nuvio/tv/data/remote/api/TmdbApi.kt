@@ -2,12 +2,22 @@ package com.nuvio.tv.data.remote.api
 
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
+import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.GET
 import retrofit2.http.Path
 import retrofit2.http.Query
+import retrofit2.http.Tag
+
+object TmdbKeyVerification
 
 interface TmdbApi {
+    @GET("configuration")
+    suspend fun verifyApiKey(
+        @Query("api_key") apiKey: String,
+        @Tag verification: TmdbKeyVerification = TmdbKeyVerification
+    ): Response<ResponseBody>
+
     
     @GET("find/{external_id}")
     suspend fun findByExternalId(

@@ -4,7 +4,6 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
@@ -35,18 +34,32 @@ class LiveTvGuideTest {
     }
 
     @Test
-    fun sportsQueueIncludesCurrentAndUpcomingProviderProgrammes() {
-        val sports = LiveChannel(1, "Arena", "Sports")
-        val local = LiveChannel(2, "Local News", "Local")
-        val schedule = listOf(
-            LiveProgramme("Expired", 0, 10),
-            LiveProgramme("Live match", 15, 20),
-            LiveProgramme("Next match", 20, 30)
+    fun sportsGroupShowsCurrentMajorCompetitions() {
+        val games = LiveChannel(1, "ESPN", "Sports")
+        val replays = LiveChannel(2, "League channel", "NBA")
+        val studio = LiveChannel(3, "League extra", "NRL")
+        val niche = LiveChannel(4, "Competition channel", "Sports")
+        val empty = LiveChannel(5, "Match channel", "AFL")
+        val late = LiveChannel(6, "Racing", "Formula 1")
+        val encore = LiveChannel(7, "Court", "Tennis")
+        val match = LiveProgramme("Live NBA: Lakers vs Celtics", 15, 20)
+        val next = LiveProgramme("Live NBA: Heat vs Knicks", 20, 30)
+        val race = LiveProgramme("Grand Prix qualifying", 14, 25)
+        val channels = listOf(games, replays, studio, niche, empty, late, encore)
+        val schedules = mapOf(
+            1L to listOf(LiveProgramme("Live NBA: past match", 0, 15), match, next),
+            2L to listOf(LiveProgramme("Live NBA Replay: Raptors vs Nets", 10, 20)),
+            3L to listOf(LiveProgramme("Live NRL pre-game countdown", 14, 20)),
+            4L to listOf(LiveProgramme("Live darts final", 1, 20)),
+            6L to listOf(race),
+            7L to listOf(LiveProgramme("Tennis: A vs B", 14, 19, "A replay of yesterday’s final."))
         )
-        val events = liveSportsEvents(listOf(sports, local), mapOf(1L to schedule, 2L to schedule), 16)
-        assertEquals(listOf("Live match", "Next match"), events.map { it.programme.title })
-        assertTrue(events.first().programme.isOnAir(16))
-        assertFalse(events.last().programme.isOnAir(16))
-        assertNull(schedule.nowAndNext(30).first)
+
+        assertTrue(replays.isSportsGuideCandidate())
+        assertTrue(late.isSportsGuideCandidate())
+        assertFalse(LiveChannel(99, "Local News", "Local").isSportsGuideCandidate())
+        assertEquals(mapOf(1L to listOf(match), 6L to listOf(race)), liveMainSportsListings(channels, schedules, 16))
+        assertEquals(mapOf(1L to listOf(next), 6L to listOf(race)), liveMainSportsListings(channels, schedules, 20))
+        assertTrue(liveMainSportsListings(channels, schedules, 30).isEmpty())
     }
 }

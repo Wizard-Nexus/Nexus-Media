@@ -121,6 +121,7 @@ internal fun LiveTvGuideHeader(
     date: Long,
     now: Long,
     status: String?,
+    sportsOnly: Boolean,
     canGoEarlier: Boolean,
     canGoLater: Boolean,
     categoriesVisible: Boolean,
@@ -133,8 +134,7 @@ internal fun LiveTvGuideHeader(
     previewSize: DpSize?,
     playingChannel: LiveChannel?,
     onDismiss: (() -> Unit)?,
-    modifier: Modifier = Modifier,
-    extra: @Composable () -> Unit = {}
+    modifier: Modifier = Modifier
 ) {
     Row(
         modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(GuideBlack, Color(0xFF10182B))))
@@ -182,9 +182,11 @@ internal fun LiveTvGuideHeader(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (!categoriesVisible) GuideButton(stringResource(R.string.live_tv_guide_categories), onCategories)
-                GuideButton("‹", onEarlier, enabled = canGoEarlier, description = stringResource(R.string.live_tv_guide_earlier))
-                GuideButton(stringResource(R.string.live_tv_now), onNow)
-                GuideButton("›", onLater, enabled = canGoLater, description = stringResource(R.string.live_tv_guide_later))
+                if (!sportsOnly) {
+                    GuideButton("‹", onEarlier, enabled = canGoEarlier, description = stringResource(R.string.live_tv_guide_earlier))
+                    GuideButton(stringResource(R.string.live_tv_now), onNow)
+                    GuideButton("›", onLater, enabled = canGoLater, description = stringResource(R.string.live_tv_guide_later))
+                }
                 GuideButton(stringResource(R.string.live_tv_search), onSearch)
                 if (onDismiss != null) GuideButton(stringResource(R.string.live_tv_preview_fullscreen), onDismiss)
             }
@@ -201,7 +203,11 @@ internal fun LiveTvGuideHeader(
             )
             Text(
                 programme?.title ?: stringResource(
-                    if (channel == null) R.string.live_tv_guide_choose else R.string.live_tv_guide_unavailable
+                    when {
+                        sportsOnly -> R.string.live_tv_sports_live_now
+                        channel == null -> R.string.live_tv_guide_choose
+                        else -> R.string.live_tv_guide_unavailable
+                    }
                 ),
                 color = GuideText,
                 style = MaterialTheme.typography.headlineSmall,
@@ -226,7 +232,6 @@ internal fun LiveTvGuideHeader(
                 }
             }
             status?.let { Text(it, color = GuideMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1) }
-            extra()
         }
     }
 }
@@ -301,6 +306,7 @@ internal fun GuideNowLine(window: GuideWindow, now: Long, modifier: Modifier = M
 internal fun LiveTvGuideRow(
     channel: LiveChannel,
     programmes: List<LiveProgramme>,
+    sportsOnly: Boolean,
     window: GuideWindow,
     selectedTime: Long,
     now: Long,
@@ -319,7 +325,10 @@ internal fun LiveTvGuideRow(
     val identity = remember { FocusRequester() }
     val track = remember { FocusRequester() }
     var trackFocused by remember { mutableStateOf(false) }
-    val blocks = remember(programmes, window.start, window.end) { guideBlocks(programmes, window.start, window.end) }
+    val blocks = remember(programmes, window.start, window.end, sportsOnly) {
+        val items = guideBlocks(programmes, window.start, window.end)
+        if (sportsOnly) items.filter { it.programme != null } else items
+    }
     val focusedBlock = blocks.firstOrNull { selectedTime in it.start until it.end }
     Row(Modifier.fillMaxWidth().height(37.dp), verticalAlignment = Alignment.CenterVertically) {
         Surface(

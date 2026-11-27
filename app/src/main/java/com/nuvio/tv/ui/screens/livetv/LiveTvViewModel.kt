@@ -33,7 +33,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -87,6 +90,7 @@ internal class LiveTvViewModel @Inject constructor(
     private val recorder: LiveTvRecordings
 ) : ViewModel() {
     private data class GuideCheck(val checkedAt: Long, val full: Boolean)
+    private data class SportsGuideCheck(val checkedAt: Long, val programmes: List<LiveProgramme>)
 
     private class Profile(
         val id: Int,
@@ -100,6 +104,7 @@ internal class LiveTvViewModel @Inject constructor(
         val loadingGuide = mutableSetOf<Long>()
         val guideCheckedAt = mutableMapOf<Long, GuideCheck>()
         val pendingFullGuide = mutableSetOf<Long>()
+        val sportsGuide = mutableMapOf<Long, SportsGuideCheck>()
     }
 
     private val client = XtreamClient()
@@ -337,6 +342,45 @@ internal class LiveTvViewModel @Inject constructor(
         }
     }
 
+    suspend fun scanSportsGuide(
+        ids: List<Long>,
+        onListings: (Map<Long, List<LiveProgramme>>) -> Unit
+    ) {
+        val active = currentProfile() ?: return
+        val source = active.source ?: return
+        val timezone = _state.value.catalog?.timezone
+
+        for (batch in ids.chunked(12)) {
+            if (active.source !== source || currentProfile() !== active) return
+            val checkedAt = SystemClock.elapsedRealtime()
+            val updates = coroutineScope {
+                batch.map { id ->
+                    async {
+                        val existing = _state.value.guide[id]
+                        val guideCheck = active.guideCheckedAt[id]
+                        if (existing != null && guideCheck != null && checkedAt - guideCheck.checkedAt < GUIDE_TTL_MS) {
+                            return@async id to existing
+                        }
+                        val cached = active.sportsGuide[id]
+                        if (cached != null && checkedAt - cached.checkedAt < GUIDE_TTL_MS) {
+                            return@async id to cached.programmes
+                        }
+                        val programmes = guideRequests.withPermit {
+                            if (active.source !== source || currentProfile() !== active) return@withPermit null
+                            providerRequest { client.guide(source, id, timezone) }.getOrNull()
+                        }
+                        if (active.source === source && currentProfile() === active && programmes != null) {
+                            active.sportsGuide[id] = SportsGuideCheck(SystemClock.elapsedRealtime(), programmes)
+                        }
+                        id to (programmes ?: cached?.programmes.orEmpty())
+                    }
+                }.awaitAll().toMap()
+            }
+            if (active.source !== source || currentProfile() !== active) return
+            onListings(updates)
+        }
+    }
+
     fun startPhoneSetup() {
         val active = currentProfile() ?: return
         if (_state.value.loading) return
@@ -442,6 +486,7 @@ internal class LiveTvViewModel @Inject constructor(
         }
         if (!sameAccount) {
             active.guideCheckedAt.clear()
+            active.sportsGuide.clear()
             active.tuningOrder = null
         }
         active.source = source

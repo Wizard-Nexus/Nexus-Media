@@ -55,6 +55,8 @@ import com.nuvio.tv.LocalContentFocusRequester
 import com.nuvio.tv.R
 import com.nuvio.tv.data.livetv.LiveChannel
 import com.nuvio.tv.data.livetv.groupNames
+import com.nuvio.tv.data.livetv.isSportsGuideCandidate
+import com.nuvio.tv.data.livetv.liveMainSportsListings
 import com.nuvio.tv.data.livetv.LiveProgramme
 import com.nuvio.tv.data.livetv.LiveSportsEvent
 import com.nuvio.tv.ui.components.NuvioDialog
@@ -188,7 +190,6 @@ private fun LiveTvGuideContent(
     val groups = remember(state.catalog, state.categories) {
         state.categories.ordered(state.catalog?.groupNames().orEmpty()).filterNot(state.categories.hidden::contains)
     }
-    val sports = remember(channels) { channels.filter { it.isSports } }
     val favouriteIds = remember(state.history.favourites) { state.history.favourites.toHashSet() }
     var section by rememberSaveable {
         mutableStateOf(LiveTvSection.entries.firstOrNull { it.name == initialBrowse?.getString("section") } ?: LiveTvSection.ALL)
@@ -206,12 +207,35 @@ private fun LiveTvGuideContent(
     var placedFocus by remember { mutableStateOf(false) }
     val restoreId = remember { playingId ?: state.lastTunedChannelId.takeIf { restorePlaybackFocus } }
 
-    val items = remember(channels, channelIndex, sports, section, group, query, state.history) {
+    val now = liveGuideClock()
+    val sportsOnly = section == LiveTvSection.SPORTS && group == null
+    val sportsCandidates = remember(channels) { channels.filter(LiveChannel::isSportsGuideCandidate) }
+    var sportsSchedules by remember(state.sourceKey) { mutableStateOf(emptyMap<Long, List<LiveProgramme>>()) }
+    var sportsLoading by remember(state.sourceKey) { mutableStateOf(false) }
+    LaunchedEffect(sportsOnly, state.sourceKey, sportsCandidates) {
+        if (!sportsOnly || sportsCandidates.isEmpty()) return@LaunchedEffect
+        val ids = sportsCandidates.map { it.id }
+        while (true) {
+            sportsLoading = true
+            try {
+                viewModel.scanSportsGuide(ids) { batch -> sportsSchedules = sportsSchedules + batch }
+            } finally {
+                sportsLoading = false
+            }
+            delay(5 * 60_000L)
+        }
+    }
+    val guide = remember(sportsOnly, sportsCandidates, sportsSchedules, state.guide, now) {
+        if (sportsOnly) liveMainSportsListings(sportsCandidates, state.guide + sportsSchedules, now) else state.guide
+    }
+
+    val sportsIds = if (sportsOnly) guide.keys else emptySet()
+    val items = remember(channels, channelIndex, sportsIds, section, group, query, state.history) {
         val filtered = when {
             group != null -> channels.filter { it.group == group }
             section == LiveTvSection.FAVOURITES -> state.history.favourites.mapNotNull(channelIndex::get)
             section == LiveTvSection.RECENT -> state.history.recent.mapNotNull(channelIndex::get)
-            section == LiveTvSection.SPORTS -> sports
+            sportsOnly -> sportsIds.mapNotNull(channelIndex::get)
             else -> channels
         }
         filtered.filter { it.matchesLiveTvSearch(query) }
@@ -224,11 +248,10 @@ private fun LiveTvGuideContent(
     var highlightedId by remember { mutableStateOf(restoreId) }
     var browsingTime by rememberSaveable { mutableLongStateOf(initialBrowse?.getLong("time") ?: 0L) }
     var windowAnchor by rememberSaveable { mutableLongStateOf(initialBrowse?.getLong("anchor") ?: 0L) }
-    val now = liveGuideClock()
     val targetRow = highlightedId?.let { highlighted -> items.firstOrNull { it.id == highlighted } } ?: items.firstOrNull()
-    val programmeTime = browsingTime.takeIf { it != 0L } ?: now
+    val programmeTime = browsingTime.takeIf { !sportsOnly && it != 0L } ?: now
     val highlighted = targetRow?.takeIf { highlightedId == it.id }
-    val currentProgrammes = state.guide[highlighted?.id].orEmpty()
+    val currentProgrammes = guide[highlighted?.id].orEmpty()
     val selectedProgramme = currentProgrammes.firstOrNull { it.isOnAir(programmeTime) }
     val sectionKey = if (section == LiveTvSection.GUIDE) LiveTvSection.ALL else section
 
@@ -286,8 +309,16 @@ private fun LiveTvGuideContent(
     LaunchedEffect(groups) {
         if (group != null && group !in groups) group = null
     }
-    LaunchedEffect(items, restoreId) {
-        if (placedFocus || items.isEmpty() && restoreId != null && state.loading) return@LaunchedEffect
+    LaunchedEffect(sportsOnly, items, highlightedId) {
+        if (sportsOnly && highlightedId != null && items.none { it.id == highlightedId }) {
+            highlightedId = null
+            if (!categoriesVisible) showCategories()
+        }
+    }
+    LaunchedEffect(items, restoreId, sportsLoading) {
+        if (placedFocus || items.isEmpty() && restoreId != null && (state.loading || sportsOnly && sportsLoading)) {
+            return@LaunchedEffect
+        }
         val restoreIndex = items.indexOfFirst { it.id == restoreId }
         if (restoreId != null && restoreIndex < 0 && (group != null || query.isNotBlank() || section != LiveTvSection.ALL)) {
             section = LiveTvSection.ALL
@@ -317,7 +348,8 @@ private fun LiveTvGuideContent(
         withFrameNanos { }
         runCatching { categoryFocus.requestFocus() }
     }
-    LaunchedEffect(rowState, state.sourceKey, now / 60_000L) {
+    LaunchedEffect(rowState, state.sourceKey, sportsOnly, now / 60_000L) {
+        if (sportsOnly) return@LaunchedEffect
         snapshotFlow { rowState.layoutInfo.visibleItemsInfo.mapNotNull { it.key as? Long } }
             .collectLatest { ids ->
                 if (ids.isNotEmpty()) {
@@ -325,14 +357,6 @@ private fun LiveTvGuideContent(
                     viewModel.requestGuide(ids, full = true)
                 }
             }
-    }
-    val showSports = section == LiveTvSection.SPORTS && group == null && highlighted == null
-    val sportsSeeds = remember(sports) { sports.take(12).map { it.id } }
-    LaunchedEffect(showSports, state.sourceKey, sportsSeeds, now / 60_000L) {
-        if (showSports) viewModel.requestGuide(sportsSeeds, full = true)
-    }
-    val featured = remember(showSports, sports, state.guide, now) {
-        if (showSports) featuredSportsEvents(sports, state.guide, now, 6) else emptyList()
     }
     BackHandler(playingId == null && !categoriesVisible && !searching && !showRecordings && eventDetails == null) { showCategories() }
 
@@ -345,9 +369,9 @@ private fun LiveTvGuideContent(
         val halfHourWidth = (maxWidth * .18f).coerceIn(128.dp, 184.dp)
         val windowDuration = (timelineWidth.value.toDouble() / halfHourWidth.value * GUIDE_STEP_MS)
             .roundToLong().coerceAtLeast(1L)
-        val window = GuideWindow(windowAnchor.takeIf { it != 0L } ?: guideTimeFloor(now), windowDuration, timelineWidth)
-        val bounds = remember(currentProgrammes, state.guide, now) {
-            val listings = if (currentProgrammes.isEmpty()) state.guide.values else listOf(currentProgrammes)
+        val window = GuideWindow(windowAnchor.takeIf { !sportsOnly && it != 0L } ?: guideTimeFloor(now), windowDuration, timelineWidth)
+        val bounds = remember(currentProgrammes, guide, now) {
+            val listings = if (currentProgrammes.isEmpty()) guide.values else listOf(currentProgrammes)
             val earliest = listings.minOfOrNull { it.firstOrNull()?.startsAt ?: now } ?: now
             val latest = listings.maxOfOrNull { it.lastOrNull()?.endsAt ?: now } ?: now
             guideTimeFloor(minOf(earliest, now)) to maxOf(latest, now)
@@ -370,6 +394,7 @@ private fun LiveTvGuideContent(
             LiveTvGuideHeader(
                 channel = highlighted, programme = selectedProgramme, date = programmeTime, now = now,
                 status = status?.let { stringResource(it) },
+                sportsOnly = sportsOnly,
                 canGoEarlier = window.start > bounds.first,
                 canGoLater = window.end < bounds.second,
                 categoriesVisible = categoriesVisible,
@@ -383,11 +408,7 @@ private fun LiveTvGuideContent(
                 playingChannel = channelIndex[playingId],
                 onDismiss = onDismiss,
                 modifier = Modifier.height(detailsHeight)
-            ) {
-                if (showSports && featured.isNotEmpty()) {
-                    LiveTvSportsStrip(featured, now) { event -> select(event.channel, event.programme) }
-                }
-            }
+            )
             Row(Modifier.fillMaxWidth().weight(1f)) {
                 if (categoriesVisible) {
                     LiveTvCategoryRail(
@@ -433,7 +454,8 @@ private fun LiveTvGuideContent(
                                         query.isNotBlank() -> R.string.live_tv_search_empty
                                         section == LiveTvSection.FAVOURITES -> R.string.live_tv_favourites_empty
                                         section == LiveTvSection.RECENT -> R.string.live_tv_recent_empty
-                                        section == LiveTvSection.SPORTS -> R.string.live_tv_no_sports
+                                        sportsOnly && sportsLoading -> R.string.live_tv_sports_checking
+                                        sportsOnly -> R.string.live_tv_sports_empty
                                         else -> R.string.live_tv_no_matching_channels
                                     }
                                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -447,7 +469,8 @@ private fun LiveTvGuideContent(
                             items(items, key = { it.id }) { channel ->
                                 LiveTvGuideRow(
                                     channel = channel,
-                                    programmes = state.guide[channel.id].orEmpty(),
+                                    programmes = guide[channel.id].orEmpty(),
+                                    sportsOnly = sportsOnly,
                                     window = window,
                                     selectedTime = programmeTime,
                                     now = now,
