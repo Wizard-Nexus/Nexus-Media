@@ -3,6 +3,8 @@ package com.nuvio.tv.data.livetv
 import java.time.LocalDate
 import java.time.ZoneId
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LiveTvGuideHistoryTest {
@@ -60,6 +62,22 @@ class LiveTvGuideHistoryTest {
         val actual = findGuideProgrammes("Anaheim Ducks", mapOf(sports.id to sports), schedules, at(3), now)
         assertEquals(listOf(bruins, stars, tomorrow), actual.map { it.programme })
         assertEquals(listOf(sports, sports, sports), actual.map { it.channel })
+        val selectedDay = findGuideProgrammes(
+            "Anaheim Ducks", mapOf(sports.id to sports), schedules, at(3), now,
+            searchDay = at(2) until at(1)
+        )
+        assertEquals(listOf(bruins), selectedDay.map { it.programme })
+    }
+
+    @Test
+    fun startsAnOngoingArchiveOnlyWhenTheProviderSupportsIt() {
+        val channel = LiveChannel(42, "Sports", "Arena", archiveDays = 7)
+        val programme = LiveProgramme("Live game", now - 600_000L, now + 600_000L)
+        assertTrue(programme.hasStartOverArchive(channel, now))
+        assertFalse(programme.copy(hasArchive = false).hasStartOverArchive(channel, now))
+        assertFalse(programme.hasStartOverArchive(channel.copy(archiveDays = 0), now))
+        assertTrue(programme.copy(hasArchive = true).hasStartOverArchive(channel.copy(archiveDays = 0), now))
+        assertFalse(programme.hasStartOverArchive(channel, programme.endsAt))
     }
 
     @Test

@@ -57,7 +57,8 @@ internal fun findGuideProgrammes(
     channels: Map<Long, LiveChannel>,
     schedules: Sequence<Pair<Long, List<LiveProgramme>>>,
     cutoff: Long,
-    now: Long
+    now: Long,
+    searchDay: LongRange? = null
 ): List<LiveSportsEvent> {
     val words = guideSearchWords.split(normalizeGuideText(query)).filter(String::isNotBlank)
     if (words.isEmpty()) return emptyList()
@@ -65,7 +66,9 @@ internal fun findGuideProgrammes(
     return schedules.flatMap { (id, programmes) ->
         val channel = channels[id] ?: return@flatMap emptySequence()
         programmes.asSequence().filter { programme ->
-            if (programme.endsAt <= cutoff) return@filter false
+            if (programme.endsAt <= cutoff ||
+                searchDay != null && (programme.startsAt > searchDay.last || programme.endsAt <= searchDay.first)
+            ) return@filter false
             val searchable = normalizeGuideText(programme.title + " " + programme.description.orEmpty())
             words.all { searchable.contains(it) }
         }.map { LiveSportsEvent(channel, it) }
@@ -92,6 +95,9 @@ internal data class LiveProgramme(
 ) {
     fun isOnAir(now: Long): Boolean = now in startsAt until endsAt
 }
+
+internal fun LiveProgramme.hasStartOverArchive(channel: LiveChannel, now: Long): Boolean =
+    startsAt < now && isOnAir(now) && hasArchive != false && (hasArchive == true || channel.archiveDays > 0)
 
 internal fun LiveProgramme.canReplay(channel: LiveChannel, now: Long): Boolean {
     if (endsAt > now || hasArchive == false) return false

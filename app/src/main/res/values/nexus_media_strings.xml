@@ -42,6 +42,9 @@
     <string name="live_tv_show_results">Show results</string>
     <string name="live_tv_clear_search">Clear search</string>
     <string name="live_tv_search_again">Search again</string>
+    <string name="live_tv_search_day">Programme day</string>
+    <string name="live_tv_search_day_value">Day · %s</string>
+    <string name="live_tv_search_all_days">All days</string>
     <string name="live_tv_search_programmes_loading">Searching guide listings…</string>
     <string name="live_tv_search_no_matches">No matching programmes or channels in your guide.</string>
     <plurals name="live_tv_search_matching_channels">
@@ -95,6 +98,8 @@
     <string name="live_tv_seek_bar">Live seek bar</string>
     <string name="live_tv_seek_unavailable">This channel has no rewind window.</string>
     <string name="live_tv_go_live">Go live</string>
+    <string name="live_tv_start_over">Start from beginning</string>
+    <string name="live_tv_start_over_unavailable">The start of this programme is unavailable on this channel.</string>
     <string name="live_tv_behind_live">LIVE  −%1$s</string>
     <string name="live_tv_setup_phone">Set up with your phone</string>
     <string name="live_tv_setup_remote">Enter with the remote</string>

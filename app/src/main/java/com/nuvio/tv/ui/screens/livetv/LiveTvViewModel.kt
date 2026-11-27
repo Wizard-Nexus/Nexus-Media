@@ -18,6 +18,7 @@ import com.nuvio.tv.data.livetv.LiveTvRecordings
 import com.nuvio.tv.data.livetv.RecordingRequest
 import com.nuvio.tv.data.livetv.canReplay
 import com.nuvio.tv.data.livetv.guideHistoryStart
+import com.nuvio.tv.data.livetv.hasStartOverArchive
 import com.nuvio.tv.data.livetv.LiveTvCategories
 import com.nuvio.tv.data.livetv.LiveTvHistory
 import com.nuvio.tv.data.livetv.LiveTvPlayer
@@ -50,6 +51,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import java.time.LocalDate
 import java.time.ZoneId
 import javax.inject.Inject
 
@@ -79,7 +81,8 @@ internal data class LiveTvArchivePlayback(
     val url: String,
     val title: String,
     val profileId: Int,
-    val filename: String? = null
+    val filename: String? = null,
+    val resumeChannelId: Long? = null
 )
 
 internal data class XtreamPhoneSetupState(
@@ -206,6 +209,23 @@ internal class LiveTvViewModel @Inject constructor(
         if (!event.programme.canReplay(channel, System.currentTimeMillis())) return null
         val url = source.replayUrl(channel, event.programme, catalog).toString()
         return LiveTvArchivePlayback(url, event.programme.title, active.id, "replay.${catalog.format}")
+    }
+
+    fun programmeStartOver(profileId: Int, channelId: Long, programme: LiveProgramme): LiveTvArchivePlayback? {
+        val active = currentProfile()?.takeIf { it.id == profileId } ?: return null
+        val source = active.source ?: return null
+        val catalog = _state.value.catalog ?: return null
+        val channel = catalog.channels.firstOrNull { it.id == channelId } ?: return null
+        val now = System.currentTimeMillis()
+        if (!programme.hasStartOverArchive(channel, now)) return null
+        val airedPortion = programme.copy(endsAt = now)
+        return LiveTvArchivePlayback(
+            source.replayUrl(channel, airedPortion, catalog).toString(),
+            programme.title,
+            profileId,
+            "start-over.${catalog.format}",
+            resumeChannelId = channelId
+        )
     }
 
     fun refresh() {
@@ -351,13 +371,19 @@ internal class LiveTvViewModel @Inject constructor(
         _state.update { it.copy(history = changed) }
     }
 
-    suspend fun searchProgrammes(query: String): List<LiveSportsEvent> {
+    suspend fun searchProgrammes(query: String, day: LocalDate?): List<LiveSportsEvent> {
         val active = currentProfile() ?: return emptyList()
         val source = active.source ?: return emptyList()
         val snapshot = _state.value
         val channels = snapshot.visibleChannels().associateBy { it.id }
+        val zone = ZoneId.systemDefault()
+        val range = day?.let {
+            val start = it.atStartOfDay(zone).toInstant().toEpochMilli()
+            val end = it.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+            start until end
+        }
         val results = withContext(Dispatchers.IO) {
-            storage.searchGuide(active.id, source, channels, snapshot.guide, query)
+            storage.searchGuide(active.id, source, channels, snapshot.guide, query, range)
         }
         return results.takeIf { currentProfile() === active && active.source === source }.orEmpty()
     }

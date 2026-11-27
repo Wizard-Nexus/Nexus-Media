@@ -8,6 +8,7 @@ import android.view.KeyEvent
 import android.view.SurfaceView
 import android.view.ViewGroup
 import android.view.ViewStub
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -52,6 +53,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.R
 import com.nuvio.tv.data.livetv.LiveChannel
+import com.nuvio.tv.data.livetv.LiveProgramme
 import com.nuvio.tv.data.livetv.nowAndNext
 import com.nuvio.tv.ui.screens.player.LivePlaybackWatchClock
 import kotlinx.coroutines.CancellationException
@@ -110,6 +112,7 @@ internal fun LiveTvVlcScreen(
     val guideVisible = showGuide && current != null
     var menuInteraction by remember { mutableIntStateOf(0) }
     var retry by remember { mutableIntStateOf(0) }
+    var startOverArchive by remember { mutableStateOf<LiveTvArchivePlayback?>(null) }
     var showSeekFeedback by remember(channelId) { mutableStateOf(false) }
     val watchClock = remember(channelId) { LivePlaybackWatchClock() }
     var watchedMs by remember(channelId) { mutableLongStateOf(0L) }
@@ -118,6 +121,7 @@ internal fun LiveTvVlcScreen(
     var playback by remember(streamUrl, retry) { mutableStateOf(VlcPlayback.OPENING) }
 
     fun tune(channel: LiveChannel, channelList: List<LiveChannel>? = null): Boolean {
+        if (startOverArchive != null) return false
         if (viewModel.tune(channel, channelList) == null) return false
         channelId = channel.id
         showControls = false
@@ -138,13 +142,38 @@ internal fun LiveTvVlcScreen(
         menuInteraction++
     }
 
+    fun startLiveProgramme(programme: LiveProgramme) {
+        if (startOverArchive != null) return
+        val player = nativePlayer
+        val target = player?.liveTvSeekWindow()?.programmeStart(programme.startsAt, System.currentTimeMillis())
+        if (player != null && target != null) {
+            player.setTime(target, false)
+            player.play()
+            menuInteraction++
+            return
+        }
+        startOverArchive = viewModel.programmeStartOver(profileId, channelId, programme)
+        if (startOverArchive == null) {
+            Toast.makeText(
+                context, R.string.live_tv_start_over_unavailable, Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
     fun showFullscreen() {
         showGuide = false
         browseOnOpen = null
     }
 
     LaunchedEffect(channelId, state.sourceKey) { viewModel.requestGuide(listOf(channelId)) }
-    LaunchedEffect(layout, foreground, streamUrl, retry, state.loading && current == null, state.stereoPcm) {
+    LaunchedEffect(layout, foreground, streamUrl, retry, state.loading && current == null, state.stereoPcm, startOverArchive) {
+        val archive = startOverArchive
+        if (archive != null) {
+            playbackLock.withLock {
+                if (!onPlayArchive(archive)) startOverArchive = null
+            }
+            return@LaunchedEffect
+        }
         val surface = layout ?: return@LaunchedEffect
         if (!foreground) return@LaunchedEffect
         if (streamUrl == null) {
@@ -370,6 +399,9 @@ internal fun LiveTvVlcScreen(
                     }
                     if (!failed) {
                         Spacer(Modifier.weight(1f))
+                        if (currentProgramme != null) {
+                            LiveTvStartOverButton({ startLiveProgramme(currentProgramme) }, seekUp) { menuInteraction++ }
+                        }
                         LiveTvEdgeButton(window, watchedMs, onClick = {
                             retry++
                             menuInteraction++

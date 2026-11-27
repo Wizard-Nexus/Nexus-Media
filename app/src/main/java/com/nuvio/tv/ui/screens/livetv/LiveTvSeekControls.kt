@@ -123,14 +123,28 @@ internal fun LiveTvEdgeButton(
     watchedMs: Long,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    onFocused: (() -> Unit)? = null
+    onFocused: (() -> Unit)? = null,
+    showGoLiveLabel: Boolean = false
 ) {
     val action = stringResource(R.string.live_tv_go_live)
+    val label = if (showGoLiveLabel) action else liveTvTimeLabel(window, watchedMs)
+    LiveTvPlaybackButton(label, onClick, modifier.semantics { contentDescription = action }, onFocused)
+}
+
+@Composable
+internal fun LiveTvStartOverButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    onFocused: (() -> Unit)? = null
+) {
+    LiveTvPlaybackButton(stringResource(R.string.live_tv_start_over), onClick, modifier, onFocused)
+}
+
+@Composable
+private fun LiveTvPlaybackButton(label: String, onClick: () -> Unit, modifier: Modifier, onFocused: (() -> Unit)?) {
     Button(
         onClick = onClick,
-        modifier = modifier.height(38.dp)
-            .onFocusChanged { if (it.isFocused) onFocused?.invoke() }
-            .semantics { contentDescription = action },
+        modifier = modifier.height(38.dp).onFocusChanged { if (it.isFocused) onFocused?.invoke() },
         colors = ButtonDefaults.colors(
             containerColor = Color.White.copy(alpha = .17f),
             contentColor = Color.White,
@@ -138,7 +152,7 @@ internal fun LiveTvEdgeButton(
             focusedContentColor = Color.Black
         )
     ) {
-        Text(liveTvTimeLabel(window, watchedMs), style = MaterialTheme.typography.labelLarge)
+        Text(label, style = MaterialTheme.typography.labelLarge)
     }
 }
 

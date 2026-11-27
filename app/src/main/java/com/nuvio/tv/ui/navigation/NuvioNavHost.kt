@@ -177,8 +177,10 @@ private fun PlaybackNavHost(
             title = media.title,
             contentName = media.title,
             filename = media.filename,
+            contentType = "channel".takeIf { media.resumeChannelId != null },
             startFromBeginning = true,
-            profileId = media.profileId
+            profileId = media.profileId,
+            liveChannelId = media.resumeChannelId
         )
         releasePrevious?.invoke()
         navController.navigate(route) {
@@ -1047,6 +1049,7 @@ private fun PlaybackNavHost(
                         viewModel = liveTv,
                         currentId = liveChannelId,
                         profileId = liveProfileId,
+                        startOver = backStackEntry.arguments?.getString("startFromBeginning") == "true",
                         initialGuide = backStackEntry.savedStateHandle.get<Bundle>(LIVE_TV_GUIDE_STATE),
                         onTune = { channel, list, guide, release ->
                             if (navController.currentBackStackEntry != backStackEntry) false

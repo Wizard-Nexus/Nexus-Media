@@ -16,6 +16,7 @@ import com.nuvio.tv.ui.theme.NuvioTheme
 import com.nuvio.tv.ui.theme.accentBrush
 
 import android.util.Log
+import android.widget.Toast
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.View
@@ -185,10 +186,13 @@ import com.nuvio.tv.libass.media.widget.AssSubtitleSurfaceView
 import kotlin.math.abs
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.tv.data.livetv.LiveChannel
+import com.nuvio.tv.data.livetv.nowAndNext
 import com.nuvio.tv.ui.screens.livetv.LiveTvEdgeButton
 import com.nuvio.tv.ui.screens.livetv.LiveTvPlaybackGuide
 import com.nuvio.tv.ui.screens.livetv.LiveTvSeekBar
 import com.nuvio.tv.ui.screens.livetv.LiveTvSeekFeedback
+import com.nuvio.tv.ui.screens.livetv.LiveTvStartOverButton
+import com.nuvio.tv.ui.screens.livetv.liveGuideClock
 import com.nuvio.tv.ui.screens.livetv.rememberLiveTvSeekWindow
 import com.nuvio.tv.ui.screens.livetv.LiveTvPreviewStatus
 import com.nuvio.tv.ui.screens.livetv.liveTvGuidePreview
@@ -227,6 +231,7 @@ internal data class LiveTvPlayerControls(
     val viewModel: LiveTvViewModel,
     val currentId: Long,
     val profileId: Int,
+    val startOver: Boolean,
     val initialGuide: Bundle?,
     val onTune: (LiveChannel, List<LiveChannel>?, browse: Bundle?, releasePrevious: () -> Unit) -> Boolean,
     val onPlayArchive: (LiveTvArchivePlayback, releasePrevious: () -> Unit) -> Boolean
@@ -257,6 +262,25 @@ internal fun PlayerScreen(
     var showLiveGuide by rememberSaveable { mutableStateOf(liveTvControls?.initialGuide != null) }
     var browseOnOpen by remember { mutableStateOf(liveTvControls?.initialGuide) }
     val liveGuideVisible = showLiveGuide && liveControlsAvailable
+    val liveProgramme = if (liveControlsAvailable && liveTvControls != null) {
+        liveState?.guide?.get(liveTvControls.currentId).orEmpty().nowAndNext(liveGuideClock()).first
+    } else null
+    val livePlayerContext = LocalContext.current
+
+    fun startLiveProgramme() {
+        val controls = liveTvControls ?: return
+        val programme = liveProgramme
+        if (controls.startOver || programme != null) {
+            if (viewModel.seekLiveProgrammeStart(if (controls.startOver) null else programme?.startsAt)) return
+        }
+        if (!controls.startOver && programme != null) {
+            val archive = controls.viewModel.programmeStartOver(controls.profileId, controls.currentId, programme)
+            if (archive != null && controls.onPlayArchive(archive, viewModel::stopAndRelease)) return
+        }
+        Toast.makeText(
+            livePlayerContext, R.string.live_tv_start_over_unavailable, Toast.LENGTH_SHORT
+        ).show()
+    }
 
     fun switchChannel(channel: LiveChannel, list: List<LiveChannel>? = null, browse: Bundle? = null): Boolean =
         liveTvControls?.onTune?.invoke(channel, list, browse, viewModel::stopAndRelease) == true
@@ -266,7 +290,8 @@ internal fun PlayerScreen(
         browseOnOpen = null
     }
     if (liveTvControls != null) {
-        LaunchedEffect(viewModel, liveTvControls.profileId, liveTvControls.currentId) {
+        LaunchedEffect(viewModel, liveTvControls.profileId, liveTvControls.currentId, liveState?.sourceKey) {
+            liveTvControls.viewModel.requestGuide(listOf(liveTvControls.currentId))
             viewModel.livePlaybackStarted.filterNotNull().first()
             liveTvControls.viewModel.channelRendered(liveTvControls.profileId, liveTvControls.currentId)
         }
@@ -1765,6 +1790,10 @@ internal fun PlayerScreen(
                     }
                 } else null,
                 onPreviousChannel = previousChannel?.let { channel -> { switchChannel(channel) } },
+                onStartOver = if (liveProgramme != null || liveTvControls?.startOver == true) ::startLiveProgramme else null,
+                onReturnToLive = if (liveTvControls?.startOver == true) {
+                    { channelIndex[liveTvControls.currentId]?.let { switchChannel(it) } }
+                } else null,
                 liveTvTransport = liveTvControls != null,
                 onShowPartyPanel = if (partyAvailable && viewModel.canUseParty) {
                     { viewModel.onEvent(PlayerEvent.OnShowPartyPanel) }
@@ -2958,6 +2987,8 @@ private fun PlayerControlsOverlay(
     onSubtitleTitleBoundsChanged: (Float, Float) -> Unit = { _, _ -> },
     onShowChannelPicker: (() -> Unit)? = null,
     onPreviousChannel: (() -> Unit)? = null,
+    onStartOver: (() -> Unit)? = null,
+    onReturnToLive: (() -> Unit)? = null,
     liveTvTransport: Boolean = false
 ) {
     val density = LocalDensity.current
@@ -3398,13 +3429,18 @@ private fun PlayerControlsOverlay(
                 }
 
                 if (liveTvTransport) {
-                    LiveTvEdgeButton(
-                        window = seekWindow,
-                        watchedMs = playbackTimeline.watchedDurationMs,
-                        onClick = viewModel::goLiveTv,
-                        modifier = Modifier.focusProperties { up = progressUpTarget },
-                        onFocused = onResetHideTimer
-                    )
+                    val seekUp = Modifier.focusProperties { up = progressUpTarget }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (onStartOver != null) LiveTvStartOverButton(onStartOver, seekUp, onResetHideTimer)
+                        LiveTvEdgeButton(
+                            window = seekWindow,
+                            watchedMs = playbackTimeline.watchedDurationMs,
+                            onClick = onReturnToLive ?: viewModel::goLiveTv,
+                            modifier = seekUp,
+                            onFocused = onResetHideTimer,
+                            showGoLiveLabel = onReturnToLive != null
+                        )
+                    }
                 } else {
                     PlayerControlsTimeTextHost(viewModel = viewModel)
                 }

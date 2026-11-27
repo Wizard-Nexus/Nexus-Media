@@ -77,6 +77,8 @@ import com.nuvio.tv.ui.screens.settings.SettingsSingleChoiceDialog
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
+import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.math.roundToLong
 
@@ -603,16 +605,44 @@ private fun LiveTvGuideContent(
         )
     }
     submittedSearch?.let { term ->
-        val programmes by produceState<List<LiveSportsEvent>?>(null, term, state.sourceKey) {
-            value = viewModel.searchProgrammes(term)
+        var selectedDay by remember(term) { mutableStateOf<LocalDate?>(null) }
+        var choosingDay by remember(term) { mutableStateOf(false) }
+        val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+        val days = remember(today, state.guideHistoryDays) {
+            (0..state.guideHistoryDays).map { today.minusDays(it.toLong()) }
         }
-        if (eventDetails == null) {
+        val effectiveDay = selectedDay?.takeIf { it in days }
+        val allDaysLabel = stringResource(R.string.live_tv_search_all_days)
+        val todayLabel = stringResource(R.string.live_tv_guide_today)
+        fun dayLabel(day: LocalDate?): String = when (day) {
+            null -> allDaysLabel
+            today -> todayLabel
+            else -> formatGuideDate(day.atStartOfDay(zone).toInstant().toEpochMilli())
+        }
+        val programmes by produceState<List<LiveSportsEvent>?>(null, term, effectiveDay, state.sourceKey) {
+            value = null
+            value = viewModel.searchProgrammes(term, effectiveDay)
+        }
+        if (choosingDay) {
+            SettingsSingleChoiceDialog(
+                title = stringResource(R.string.live_tv_search_day),
+                options = (listOf(null) + days).map { SettingsPickerOption(it, dayLabel(it)) },
+                selectedValue = effectiveDay,
+                onOptionSelected = {
+                    selectedDay = it
+                    choosingDay = false
+                },
+                onDismiss = { choosingDay = false }
+            )
+        } else if (eventDetails == null) {
             val matchingChannels = remember(channels, term) { channels.count { it.matchesLiveTvSearch(term) } }
             LiveTvSearchResultsDialog(
                 term = term,
                 programmes = programmes,
                 channelCount = matchingChannels,
                 now = now,
+                dayLabel = dayLabel(effectiveDay),
+                onChooseDay = { choosingDay = true },
                 onSelect = { eventDetails = it },
                 onChannels = {
                     submittedSearch = null
@@ -754,6 +784,8 @@ private fun LiveTvSearchResultsDialog(
     programmes: List<LiveSportsEvent>?,
     channelCount: Int,
     now: Long,
+    dayLabel: String,
+    onChooseDay: () -> Unit,
     onSelect: (LiveSportsEvent) -> Unit,
     onChannels: () -> Unit,
     onSearchAgain: () -> Unit,
@@ -766,6 +798,7 @@ private fun LiveTvSearchResultsDialog(
         width = 640.dp
     ) {
         val results = programmes.orEmpty()
+        GuideButton(stringResource(R.string.live_tv_search_day_value, dayLabel), onChooseDay)
         if (results.isNotEmpty()) {
             LazyColumn(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 255.dp),

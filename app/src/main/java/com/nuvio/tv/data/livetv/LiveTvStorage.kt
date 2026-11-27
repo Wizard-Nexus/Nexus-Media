@@ -149,7 +149,8 @@ internal class LiveTvStorage @Inject constructor(@ApplicationContext context: Co
         source: XtreamSource,
         channels: Map<Long, LiveChannel>,
         visibleSchedules: Map<Long, List<LiveProgramme>>,
-        query: String
+        query: String,
+        searchDay: LongRange?
     ): List<LiveSportsEvent> {
         val folder = File(guideDirectory(profileId), source.cacheKey)
         val cachedIds = synchronized(cacheLock) {
@@ -160,7 +161,7 @@ internal class LiveTvStorage @Inject constructor(@ApplicationContext context: Co
         val schedules = ids.map { id ->
             id to (visibleSchedules[id] ?: readGuide(profileId, source, id))
         }
-        return findGuideProgrammes(query, channels, schedules, guideCutoff(profileId), System.currentTimeMillis())
+        return findGuideProgrammes(query, channels, schedules, guideCutoff(profileId), System.currentTimeMillis(), searchDay)
     }
 
     fun trimGuideHistory(profileId: Int, source: XtreamSource) = synchronized(cacheLock) {
