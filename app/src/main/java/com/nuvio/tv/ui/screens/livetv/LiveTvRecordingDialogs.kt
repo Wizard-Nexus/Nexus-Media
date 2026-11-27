@@ -68,7 +68,7 @@ internal fun LiveTvProgrammeDialog(
         title = programme.title,
         subtitle = stringResource(
             R.string.live_tv_guide_event_time, event.channel.name,
-            programmeDate(programme.startsAt), formatProgrammeTime(programme.endsAt)
+            programmeDateAndTime(programme.startsAt), formatProgrammeTime(programme.endsAt)
         )
     ) {
         programme.description?.let {
@@ -189,7 +189,7 @@ internal fun LiveTvRecordingsDialog(
                                     if (unavailable == entry.id) stringResource(R.string.live_tv_recording_file_unavailable)
                                     else stringResource(
                                         R.string.live_tv_recording_entry_subtitle,
-                                        entry.channelName, programmeDate(entry.startsAt), stringResource(entry.status.label)
+                                        entry.channelName, programmeDateAndTime(entry.startsAt), stringResource(entry.status.label)
                                     ),
                                     color = GuideMuted,
                                     style = MaterialTheme.typography.labelSmall
@@ -226,8 +226,10 @@ internal fun LiveTvRecordingsDialog(
 }
 
 @Composable
-private fun programmeDate(time: Long): String = remember(time) {
-    DateTimeFormatter.ofPattern("EEE, d MMM HH:mm").format(Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()))
+private fun programmeDateAndTime(time: Long): String = remember(time) {
+    val date = DateTimeFormatter.ofPattern("EEE, d MMM")
+        .format(Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()))
+    "$date ${formatProgrammeTime(time)}"
 }
 
 @get:StringRes
