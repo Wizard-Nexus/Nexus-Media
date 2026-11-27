@@ -17,6 +17,7 @@ import com.nuvio.tv.data.livetv.LiveSportsEvent
 import com.nuvio.tv.data.livetv.LiveTvRecordings
 import com.nuvio.tv.data.livetv.RecordingRequest
 import com.nuvio.tv.data.livetv.canReplay
+import com.nuvio.tv.data.livetv.guideHistoryStart
 import com.nuvio.tv.data.livetv.LiveTvCategories
 import com.nuvio.tv.data.livetv.LiveTvHistory
 import com.nuvio.tv.data.livetv.LiveTvPlayer
@@ -49,6 +50,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import java.time.ZoneId
 import javax.inject.Inject
 
 internal data class LiveTvState(
@@ -234,8 +236,20 @@ internal class LiveTvViewModel @Inject constructor(
 
     fun setGuideHistoryDays(days: Int) {
         val active = currentProfile() ?: return
+        val previousDays = _state.value.guideHistoryDays
         storage.writeGuideHistoryDays(active.id, days)
-        _state.update { it.copy(guideHistoryDays = days) }
+        val cutoff = guideHistoryStart(System.currentTimeMillis(), days, ZoneId.systemDefault())
+        _state.update { state ->
+            state.copy(guideHistoryDays = days, guide = state.guide.mapValues { (_, listings) ->
+                listings.filter { it.endsAt > cutoff }
+            })
+        }
+        val source = active.source ?: return
+        if (days < previousDays) {
+            active.scope.launch(Dispatchers.IO) { storage.trimGuideHistory(active.id, source) }
+        }
+        // Fetch the provider's full table again the next time the guide opens.
+        active.guideCheckedAt.clear()
     }
 
     fun setGuideColour(colour: AppTheme?) {
@@ -359,20 +373,21 @@ internal class LiveTvViewModel @Inject constructor(
             }
             active.scope.launch {
                 try {
-                    val listings = guideRequests.withPermit {
+                    if (id !in _state.value.guide) {
+                        val cached = withContext(Dispatchers.IO) { storage.readGuide(active.id, source, id) }
+                        if (active.source !== source) return@launch
+                        if (cached.isNotEmpty()) showGuideListings(active, id, cached)
+                    }
+                    val updated = guideRequests.withPermit {
                         if (active.source !== source) return@withPermit null
                         providerRequest { client.guide(source, id, timezone, fullSchedule) }.getOrNull()
                     }
                     if (active.source !== source) return@launch
                     active.guideCheckedAt[id] = GuideCheck(SystemClock.elapsedRealtime(), fullSchedule)
-                    if (listings != null) {
-                        val guide = _state.value.guide
-                        val evicted = guide.keys.firstOrNull().takeIf { id !in guide && guide.size >= 256 }
-                        val entries = if (evicted != null) {
-                            active.guideCheckedAt.remove(evicted)
-                            guide - evicted
-                        } else guide
-                        _state.update { it.copy(guide = entries + (id to listings)) }
+                    if (!updated.isNullOrEmpty()) {
+                        val listings = withContext(Dispatchers.IO) { storage.rememberGuide(active.id, source, id, updated) }
+                        if (active.source !== source) return@launch
+                        showGuideListings(active, id, listings)
                     }
                 } finally {
                     if (active.source === source) {
@@ -382,6 +397,16 @@ internal class LiveTvViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    private fun showGuideListings(active: Profile, id: Long, listings: List<LiveProgramme>) {
+        val guide = _state.value.guide
+        val evicted = guide.keys.firstOrNull().takeIf { id !in guide && guide.size >= 256 }
+        val entries = if (evicted != null) {
+            active.guideCheckedAt.remove(evicted)
+            guide - evicted
+        } else guide
+        _state.update { it.copy(guide = entries + (id to listings)) }
     }
 
     suspend fun scanSportsGuide(

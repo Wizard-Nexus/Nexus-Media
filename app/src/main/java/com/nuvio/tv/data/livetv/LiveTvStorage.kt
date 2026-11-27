@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -37,6 +38,10 @@ internal enum class LiveTvPlayer {
 
 @Singleton
 internal class LiveTvStorage @Inject constructor(@ApplicationContext context: Context) : ProfileScopedCredentialStore {
+    private companion object {
+        const val MAX_CACHED_GUIDES = 512
+    }
+
     private val credentials = ProtectedProfilePreferences(context, "nexus_iptv", "app.nexusmedia.tv.iptv.v1")
     private val directory = File(context.filesDir, "live-tv")
     private val history = context.getSharedPreferences("nexus_live_tv_history", Context.MODE_PRIVATE)
@@ -84,9 +89,11 @@ internal class LiveTvStorage @Inject constructor(@ApplicationContext context: Co
         }
     }.getOrNull()
 
-    fun writeSource(profileId: Int, source: XtreamSource?) {
+    fun writeSource(profileId: Int, source: XtreamSource?): Unit = synchronized(cacheLock) {
+        val previous = readSource(profileId)?.cacheKey
         val value = source?.let { json.encodeToString(SavedSource(it.server.toString(), it.username, it.password)) }
         credentials.write(profileId, value)
+        if (source == null || previous != source.cacheKey) guideDirectory(profileId).deleteRecursively()
     }
 
     fun readCatalog(profileId: Int, source: XtreamSource): XtreamCatalog? = synchronized(cacheLock) {
@@ -98,19 +105,55 @@ internal class LiveTvStorage @Inject constructor(@ApplicationContext context: Co
 
     fun writeCatalog(profileId: Int, source: XtreamSource, catalog: XtreamCatalog) = synchronized(cacheLock) {
         check(directory.isDirectory || directory.mkdirs())
-        val cache = cache(profileId)
-        val bytes = json.encodeToString(CachedCatalog(source.cacheKey, catalog)).encodeToByteArray()
-        val stream = cache.startWrite()
-        try {
-            stream.write(bytes)
-            cache.finishWrite(stream)
-        } catch (failure: Exception) {
-            cache.failWrite(stream)
-            throw failure
-        }
+        writeAtomically(cache(profileId), json.encodeToString(CachedCatalog(source.cacheKey, catalog)).encodeToByteArray())
     }
 
     fun clearCatalog(profileId: Int) = synchronized(cacheLock) { cache(profileId).delete() }
+
+    fun readGuide(profileId: Int, source: XtreamSource, channelId: Long): List<LiveProgramme> = synchronized(cacheLock) {
+        val file = guideFile(profileId, source, channelId)
+        val cutoff = guideCutoff(profileId)
+        readGuideFile(file).filter { it.endsAt > cutoff }
+    }
+
+    fun rememberGuide(
+        profileId: Int,
+        source: XtreamSource,
+        channelId: Long,
+        fresh: List<LiveProgramme>
+    ): List<LiveProgramme> = synchronized(cacheLock) {
+        val cutoff = guideCutoff(profileId)
+        if (readSource(profileId)?.cacheKey != source.cacheKey) {
+            return@synchronized fresh.filter { it.endsAt > cutoff }
+        }
+        val file = guideFile(profileId, source, channelId)
+        val cached = readGuideFile(file)
+        val merged = mergeGuideHistory(cached, fresh, cutoff)
+        if (cached != merged) {
+            runCatching {
+                val isNew = !file.baseFile.isFile
+                storeGuideFile(file, merged)
+                if (isNew) {
+                    file.baseFile.parentFile?.listFiles { candidate -> candidate.extension == "json" }
+                        ?.sortedByDescending { it.lastModified() }
+                        ?.drop(MAX_CACHED_GUIDES)
+                        ?.forEach { AtomicFile(it).delete() }
+                }
+            }
+        }
+        merged
+    }
+
+    fun trimGuideHistory(profileId: Int, source: XtreamSource) = synchronized(cacheLock) {
+        val cutoff = guideCutoff(profileId)
+        val folder = File(guideDirectory(profileId), source.cacheKey)
+        folder.listFiles { file -> file.extension == "json" }?.forEach {
+            val file = AtomicFile(it)
+            val cached = readGuideFile(file)
+            val retained = cached.filter { programme -> programme.endsAt > cutoff }
+            if (cached != retained) runCatching { storeGuideFile(file, retained) }
+        }
+    }
 
     fun readHistory(profileId: Int, source: XtreamSource): LiveTvHistory = runCatching {
         history.getString(historyKey(profileId, source), null)?.let { json.decodeFromString<LiveTvHistory>(it) }
@@ -141,12 +184,44 @@ internal class LiveTvStorage @Inject constructor(@ApplicationContext context: Co
     }
 
     override fun clearAllProfiles() {
-        credentials.clear()
-        history.edit().clear().apply()
         synchronized(cacheLock) {
-            directory.listFiles()?.filter { it.isFile && it.name.startsWith("profile-") }?.forEach { it.delete() }
+            credentials.clear()
+            history.edit().clear().apply()
+            directory.listFiles()?.filter { it.name.startsWith("profile-") }?.forEach { it.deleteRecursively() }
         }
         _resetVersion.update { it + 1 }
+    }
+
+    private fun writeAtomically(file: AtomicFile, data: ByteArray) {
+        val stream = file.startWrite()
+        try {
+            stream.write(data)
+            file.finishWrite(stream)
+        } catch (failure: Exception) {
+            file.failWrite(stream)
+            throw failure
+        }
+    }
+
+    private fun guideDirectory(profileId: Int): File = File(directory, "profile-$profileId-guide")
+
+    private fun guideFile(profileId: Int, source: XtreamSource, channelId: Long): AtomicFile =
+        AtomicFile(File(File(guideDirectory(profileId), source.cacheKey), "$channelId.json"))
+
+    private fun guideCutoff(profileId: Int): Long =
+        guideHistoryStart(System.currentTimeMillis(), readGuideHistoryDays(profileId), ZoneId.systemDefault())
+
+    private fun readGuideFile(file: AtomicFile): List<LiveProgramme> =
+        runCatching { json.decodeFromString<List<LiveProgramme>>(file.readFully().decodeToString()) }.getOrDefault(emptyList())
+
+    private fun storeGuideFile(file: AtomicFile, listings: List<LiveProgramme>) {
+        if (listings.isEmpty()) {
+            file.delete()
+        } else {
+            val folder = requireNotNull(file.baseFile.parentFile)
+            check(folder.isDirectory || folder.mkdirs())
+            writeAtomically(file, json.encodeToString(listings).encodeToByteArray())
+        }
     }
 
     private fun cache(profileId: Int): AtomicFile = AtomicFile(File(directory, "profile-$profileId.json"))

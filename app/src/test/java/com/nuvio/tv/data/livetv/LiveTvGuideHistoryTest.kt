@@ -34,6 +34,17 @@ class LiveTvGuideHistoryTest {
     }
 
     @Test
+    fun keepsEveryCachedDayInTheWindowWhenTheProviderDropsEarlierListings() {
+        val cached = (8L downTo 0L).map(::on)
+        val updated = on(0).copy(title = "Corrected current listing")
+        val recent = mergeGuideHistory(cached, listOf(updated), at(3))
+        assertEquals(listOf(on(3), on(2), on(1), updated), recent)
+        val sevenDays = mergeGuideHistory(cached, listOf(updated), at(7))
+        assertEquals((7L downTo 1L).map(::on) + updated, sevenDays)
+        assertEquals(recent, mergeGuideHistory(recent, emptyList(), at(3)))
+    }
+
+    @Test
     fun overnightListingStartsTheJumpAtTheBeginningOfTheAllowedDay() {
         val overnight = LiveProgramme("Overnight", at(2, 23), at(1, 2))
         val endsAtMidnight = LiveProgramme("Earlier", at(2, 20), at(1))

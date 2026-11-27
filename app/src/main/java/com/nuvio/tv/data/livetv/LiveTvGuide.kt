@@ -1,5 +1,6 @@
 package com.nuvio.tv.data.livetv
 
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -33,6 +34,24 @@ internal fun earlierGuideDateTargets(
     }.minOrNull()?.coerceAtLeast(start)
 }
 
+internal fun mergeGuideHistory(
+    cached: List<LiveProgramme>,
+    refreshed: List<LiveProgramme>,
+    cutoff: Long
+): List<LiveProgramme> {
+    val fresh = refreshed.filter { it.endsAt > cutoff }
+    var freshIndex = 0
+    val retained = cached.filter { listing ->
+        if (listing.endsAt <= cutoff) return@filter false
+        while (freshIndex < fresh.size && fresh[freshIndex].endsAt <= listing.startsAt) {
+            freshIndex++
+        }
+        freshIndex == fresh.size || listing.endsAt <= fresh[freshIndex].startsAt
+    }
+    return (retained + fresh).sortedBy { it.startsAt }
+}
+
+@Serializable
 internal data class LiveProgramme(
     val title: String,
     val startsAt: Long,

@@ -129,7 +129,7 @@
     <string name="live_tv_recording_starting">Starting recording…</string>
     <string name="live_tv_recording_entry_subtitle">%1$s · %2$s · %3$s</string>
     <string name="live_tv_guide_history">Guide history</string>
-    <string name="live_tv_guide_history_help">How many previous days to show when your provider supplies listings.</string>
+    <string name="live_tv_guide_history_help">Keep previously loaded listings for this many days on this TV.</string>
     <plurals name="live_tv_history_days">
         <item quantity="one">%d day</item>
         <item quantity="other">%d days</item>
