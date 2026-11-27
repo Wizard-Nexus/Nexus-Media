@@ -310,6 +310,10 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         return (seconds * 1000.0).roundToLong().coerceAtLeast(0L)
     }
 
+    internal fun streamFrameRate(): Double? = if (initialized) {
+        mpv.getPropertyDouble("container-fps")
+    } else null
+
     fun durationMs(): Long {
         if (!initialized) return 0L
         val seconds = mpv.getPropertyDouble("duration/full") ?: 0.0

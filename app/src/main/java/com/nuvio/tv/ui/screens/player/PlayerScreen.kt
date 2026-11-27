@@ -188,6 +188,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.tv.data.livetv.LiveChannel
 import com.nuvio.tv.data.livetv.nowAndNext
 import com.nuvio.tv.ui.screens.livetv.LiveTvEdgeButton
+import com.nuvio.tv.ui.screens.livetv.LiveTvFpsReadout
 import com.nuvio.tv.ui.screens.livetv.LiveTvPlaybackGuide
 import com.nuvio.tv.ui.screens.livetv.LiveTvSeekBar
 import com.nuvio.tv.ui.screens.livetv.LiveTvSeekFeedback
@@ -3432,6 +3433,7 @@ private fun PlayerControlsOverlay(
                     val seekUp = Modifier.focusProperties { up = progressUpTarget }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         if (onStartOver != null) LiveTvStartOverButton(onStartOver, seekUp, onResetHideTimer)
+                        LiveTvFpsReadout(viewModel::readLiveTvVideoSample)
                         LiveTvEdgeButton(
                             window = seekWindow,
                             watchedMs = playbackTimeline.watchedDurationMs,

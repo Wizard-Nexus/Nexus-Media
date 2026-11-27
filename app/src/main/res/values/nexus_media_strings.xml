@@ -99,6 +99,9 @@
     <string name="live_tv_seek_unavailable">This channel has no rewind window.</string>
     <string name="live_tv_go_live">Go live</string>
     <string name="live_tv_start_over">Start from beginning</string>
+    <string name="live_tv_fps">%d FPS</string>
+    <string name="live_tv_stream_fps">%d stream FPS</string>
+    <string name="live_tv_fps_waiting">— FPS</string>
     <string name="live_tv_start_over_unavailable">The start of this programme is unavailable on this channel.</string>
     <string name="live_tv_behind_live">LIVE  −%1$s</string>
     <string name="live_tv_setup_phone">Set up with your phone</string>

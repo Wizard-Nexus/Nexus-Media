@@ -32,6 +32,24 @@ class LiveTvSeekWindowTest {
     }
 
     @Test
+    fun estimatesRenderedFpsFromTwoSamplesOnTheSameDecoder() {
+        val decoder = Any()
+        val previous = LiveTvVideoSample(decoder, 240, 24.0)
+        val current = LiveTvVideoSample(decoder, 276, 24.0)
+        assertEquals(LiveTvFps(30, measured = true), sampledLiveTvFps(previous, current, 1_200L))
+    }
+
+    @Test
+    fun showsTheReportedStreamRateWhenTheMeasuredCounterChangesOrResets() {
+        val decoder = Any()
+        val previous = LiveTvVideoSample(decoder, 240, 24.0)
+        val current = LiveTvVideoSample(decoder, 3, 23.976)
+        assertEquals(LiveTvFps(24, measured = false), sampledLiveTvFps(previous, current, 1_200L))
+        assertEquals(LiveTvFps(24, measured = false), sampledLiveTvFps(previous, current.copy(source = Any()), 1_200L))
+        assertNull(sampledLiveTvFps(null, null, 0L))
+    }
+
+    @Test
     fun positionsOutsideTheWindowAreClampedForDisplay() {
         assertEquals(0f, LiveTvSeekWindow(10_000, 35_000, 8_000).progress, .001f)
         assertEquals(1f, LiveTvSeekWindow(10_000, 35_000, 40_000).progress, .001f)

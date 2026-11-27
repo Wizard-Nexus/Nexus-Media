@@ -4,6 +4,22 @@ import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.exoplayer.SeekParameters
 import com.nuvio.tv.ui.screens.livetv.LiveTvSeekWindow
+import com.nuvio.tv.ui.screens.livetv.LiveTvVideoSample
+
+internal fun PlayerRuntimeController.liveTvVideoSample(): LiveTvVideoSample? {
+    if (isUsingMpvEngine()) {
+        val view = mpvView ?: return null
+        return LiveTvVideoSample(view, null, view.streamFrameRate())
+    }
+    val player = exoPlayer ?: return null
+    val counters = player.videoDecoderCounters
+    counters?.ensureUpdated()
+    return LiveTvVideoSample(
+        counters ?: player,
+        counters?.renderedOutputBufferCount?.takeIf { it > 0 },
+        player.videoFormat?.frameRate?.toDouble()
+    )
+}
 
 internal fun PlayerRuntimeController.liveTvSeekWindow(): LiveTvSeekWindow? {
     if (!LivePlaybackUiPolicy.isLiveContentType(contentType) || _uiState.value.error != null) return null

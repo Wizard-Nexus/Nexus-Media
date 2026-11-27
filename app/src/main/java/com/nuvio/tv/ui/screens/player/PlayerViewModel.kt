@@ -220,6 +220,8 @@ class PlayerViewModel @Inject internal constructor(
 
     internal fun readLiveTvSeekWindow() = controller.liveTvSeekWindow()
 
+    internal fun readLiveTvVideoSample() = controller.liveTvVideoSample()
+
     internal fun seekLiveTvBy(deltaMs: Long) = controller.seekLiveTvBy(deltaMs)
 
     internal fun goLiveTv() = controller.goLiveTv()

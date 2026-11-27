@@ -190,7 +190,7 @@ internal fun LiveTvVlcScreen(
             try {
                 withContext(Dispatchers.IO) {
                     // LibVLC appends device-specific audio and chroma options to this list.
-                    val vlc = LibVLC(context, arrayListOf("--quiet", "--no-video-title-show"))
+                    val vlc = LibVLC(context, arrayListOf("--quiet", "--no-video-title-show", "--stats"))
                     library = vlc
                     val player = MediaPlayer(vlc)
                     engine = player
@@ -402,6 +402,7 @@ internal fun LiveTvVlcScreen(
                         if (currentProgramme != null) {
                             LiveTvStartOverButton({ startLiveProgramme(currentProgramme) }, seekUp) { menuInteraction++ }
                         }
+                        LiveTvFpsReadout { nativePlayer?.liveTvVideoSample() }
                         LiveTvEdgeButton(window, watchedMs, onClick = {
                             retry++
                             menuInteraction++
@@ -422,6 +423,18 @@ internal fun LiveTvVlcScreen(
             )
         }
     }
+}
+
+private fun MediaPlayer.liveTvVideoSample(): LiveTvVideoSample {
+    val media = media
+    val rendered = try {
+        media?.stats?.displayedPictures?.takeIf { it > 0 }
+    } finally {
+        media?.release()
+    }
+    val track = currentVideoTrack
+    val fps = if (track != null && track.frameRateDen > 0) track.frameRateNum.toDouble() / track.frameRateDen else null
+    return LiveTvVideoSample(this, rendered, fps)
 }
 
 private fun MediaPlayer.liveTvSeekWindow(): LiveTvSeekWindow? {
