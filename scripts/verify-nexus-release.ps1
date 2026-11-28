@@ -41,15 +41,20 @@ function Confirm-ApkSignature([string]$Apk) {
 Get-ChildItem Env: | Where-Object { $_.Name -match '^NUVIO_RELEASE_|^GH_TOKEN$|^GITHUB_TOKEN$|^SENTRY_AUTH_TOKEN$' } | ForEach-Object { Remove-Item -LiteralPath ('Env:' + $_.Name) }
 
 $init = Join-Path $PSScriptRoot 'nexus-release.init.gradle'
-$sizeArguments = @()
+$nativeArguments = @()
+$testArguments = @(
+    ':app:testFullReleaseUnitTest', '--rerun',
+    '--tests', 'com.nuvio.tv.data.livetv.XtreamClientTest',
+    '--tests', 'com.nuvio.tv.updater.*'
+)
 if ($SmallApks) {
     $ndk = Join-Path $state 'toolchains/android-ndk-r29'
     $strip = Join-Path $ndk 'toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-strip.exe'
     if (!(Test-Path -LiteralPath $strip -PathType Leaf)) {
         throw 'Install the pinned Android NDK r29 in the release toolchains folder before building smaller APKs.'
     }
-    $sizeArguments += "-PnexusReleaseNdkPath=$ndk"
-    $sizeArguments += @('--tests', 'com.nuvio.tv.data.livetv.*', '--tests', 'com.nuvio.tv.core.server.XtreamPhoneSetupServerTest')
+    $nativeArguments += "-PnexusReleaseNdkPath=$ndk"
+    $testArguments += @('--tests', 'com.nuvio.tv.data.livetv.*', '--tests', 'com.nuvio.tv.core.server.XtreamPhoneSetupServerTest')
 }
 Push-Location -LiteralPath $Source
 $originalPath = $env:Path
@@ -74,15 +79,27 @@ try {
             $secureTmdbKey.Dispose()
         }
     }
+    $hostMemory = Get-CimInstance -ClassName Win32_OperatingSystem -Property FreeVirtualMemory
+    $availableCommitMiB = [int]($hostMemory.FreeVirtualMemory / 1KB)
+    if ($availableCommitMiB -lt (9 * 1024)) {
+        throw "Android release optimization needs 9 GiB of available Windows commit (currently ${availableCommitMiB} MiB). Retry when more memory is free."
+    }
+    Write-Output "Starting release optimization with ${availableCommitMiB} MiB of available Windows commit."
+
     $gradleArguments = @(
-        '--init-script', $init, '--daemon', '--build-cache', '--console=plain', '--configure-on-demand', '--max-workers=1',
+        '--init-script', $init, '--no-daemon', '--no-build-cache', '--console=plain', '--configure-on-demand', '--max-workers=1',
         '-PnexusUniversalApk=true', '-Pkotlin.compiler.execution.strategy=in-process',
-        '-Pandroid.builder.sdkDownload=false',
-        '-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=768m -XX:ActiveProcessorCount=8 -Dfile.encoding=UTF-8',
-        ':app:assembleFullRelease', ':app:testFullReleaseUnitTest', '--rerun',
-        '--tests', 'com.nuvio.tv.data.livetv.XtreamClientTest', '--tests', 'com.nuvio.tv.updater.*'
-    ) + $sizeArguments
-    Invoke-Checked (Join-Path $Source 'gradlew.bat') $gradleArguments
+        '-Pandroid.builder.sdkDownload=false'
+    ) + $nativeArguments
+    $gradle = Join-Path $Source 'gradlew.bat'
+    # Android includes the processor count in the optimizer task inputs.
+    $jvmOptions = '-XX:MaxMetaspaceSize=640m -XX:ActiveProcessorCount=6 -Djava.util.concurrent.ForkJoinPool.common.parallelism=3 -Dfile.encoding=UTF-8'
+    $optimizeJvm = "-Dorg.gradle.jvmargs=-Xmx5120m $jvmOptions"
+    Invoke-Checked $gradle ($gradleArguments + $optimizeJvm + @(
+        ':app:minifyFullReleaseWithR8', ':app:optimizeFullReleaseResources', ':app:lintVitalFullRelease'
+    ) + $testArguments)
+    $assembleJvm = "-Dorg.gradle.jvmargs=-Xmx3584m $jvmOptions"
+    Invoke-Checked $gradle ($gradleArguments + $assembleJvm + @(':app:assembleFullRelease', '-x', ':app:lintVitalFullRelease'))
 } finally {
     $env:NEXUS_TMDB_API_KEY = $originalTmdbKey
     $env:Path = $originalPath
